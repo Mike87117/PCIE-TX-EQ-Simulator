@@ -21,11 +21,12 @@ EYE_UI = 2
 MAX_EYE_TRACES = 200
 EYE_RENDER_MODE = "line"  # "line" | "density" (reserved)
 
-# Approx preset values for simulation only (not PCIe compliance table).
+# Approx preset values for visualization only. This is not a PCIe compliance
+# table and the channel model below is intentionally simplified.
 PCIE_PRESET_DB_TABLE = {
     0: (0.0, -6.0),
     1: (0.0, -3.5),
-    2: (0.0, -4.5),
+    2: (0.0, -4.4),
     3: (0.0, -2.5),
     4: (0.0, 0.0),
     5: (1.9, 0.0),
@@ -34,6 +35,19 @@ PCIE_PRESET_DB_TABLE = {
     8: (3.5, -3.5),
     9: (3.5, 0.0),
     10: (0.0, -9.5),
+}
+
+PRESET_TAP_TABLE = {
+    0: (0.000, -0.250),
+    1: (0.000, -0.167),
+    2: (0.000, -0.200),
+    3: (0.000, -0.125),
+    4: (0.000, 0.000),
+    5: (-0.100, 0.000),
+    6: (-0.125, 0.000),
+    7: (-0.100, -0.200),
+    8: (-0.125, -0.125),
+    9: (-0.166, 0.000),
 }
 
 np.random.seed(7)
@@ -45,10 +59,14 @@ symbols = 2 * bits - 1
 # =========================
 
 def calc_levels(cm1, cp1):
+    cm1 = min(float(cm1), 0.0)
+    cp1 = min(float(cp1), 0.0)
     c0 = 1 - abs(cm1) - abs(cp1)
+    # Va: first UI after transition, Vb: repeated/de-emphasis level,
+    # Vc: UI before transition/preshoot level.
     va = abs(cm1 * 1 + c0 * 1 + cp1 * -1)
     vb = abs(cm1 * 1 + c0 * 1 + cp1 * 1)
-    vc = abs(cm1 * 1 + c0 * -1 + cp1 * -1)
+    vc = abs(cm1 * -1 + c0 * 1 + cp1 * 1)
     de_db = 20 * np.log10(vb / va) if va > 0 and vb > 0 else -99
     pre_db = 20 * np.log10(vc / vb) if vb > 0 and vc > 0 else 99
     return c0, va, vb, vc, pre_db, de_db
@@ -56,50 +74,29 @@ def calc_levels(cm1, cp1):
 
 def db_to_taps(pre_db, de_db):
     eps = 1e-6
+    pre_db = max(float(pre_db), 0.0)
+    de_db = min(float(de_db), 0.0)
 
-    # Pure preshoot: only C-1 active, C+1 ~ 0
-    if abs(de_db) < eps and abs(pre_db) >= eps:
-        r_pre = 10 ** (pre_db / 20)
-        cm1 = (r_pre - 1) / (r_pre + 1)
-        cp1 = 0.0
-        cm1 = float(np.clip(cm1, 0.0, 0.45))
-        return cm1, cp1
-
-    # Pure de-emphasis: only C+1 active, C-1 ~ 0
-    if abs(pre_db) < eps and abs(de_db) >= eps:
-        r_de = 10 ** (de_db / 20)
-        cp1_mag = (1 - r_de) / (1 + r_de)
-        cm1 = 0.0
-        cp1 = -float(np.clip(cp1_mag, 0.0, 0.45))
-        return cm1, cp1
-
-    # Mixed mode
-    r_de = 10 ** (de_db / 20)
     r_pre = 10 ** (pre_db / 20)
-    denom = (1 - r_de) + r_pre * r_de
-    va = 1 / denom
-    p = (1 - va) / 2
-    q = va * (1 - r_de) / 2
-    p = np.clip(p, 0, 0.45)
-    q = np.clip(q, 0, 0.45)
-    if p + q >= 0.49:
-        scale = 0.49 / (p + q)
-        p *= scale
-        q *= scale
-    cm1 = float(p)
-    cp1 = -float(q)
+    r_de = 10 ** (de_db / 20)
+    va = 1.0 / (1.0 + r_de * (r_pre - 1.0))
+    vc = r_pre * r_de * va
 
-    # Keep |C-1|+|C0|+|C+1| normalized and robust numerically.
-    c0 = 1 - abs(cm1) - abs(cp1)
-    norm = abs(cm1) + abs(c0) + abs(cp1)
-    if norm > eps:
-        cm1 /= norm
-        cp1 /= norm
+    cm1_mag = max(0.0, (1.0 - va) / 2.0)
+    cp1_mag = max(0.0, (1.0 - vc) / 2.0)
+    if cm1_mag + cp1_mag >= 0.49:
+        scale = 0.49 / (cm1_mag + cp1_mag + eps)
+        cm1_mag *= scale
+        cp1_mag *= scale
 
+    cm1 = -float(np.clip(cm1_mag, 0.0, 0.45))
+    cp1 = -float(np.clip(cp1_mag, 0.0, 0.45))
     return cm1, cp1
 
 
 def tx_fir(symbols_in, cm1, cp1):
+    cm1 = min(float(cm1), 0.0)
+    cp1 = min(float(cp1), 0.0)
     c0 = 1 - abs(cm1) - abs(cp1)
     padded = np.pad(symbols_in, (1, 1), mode="edge")
     y = []
@@ -125,6 +122,13 @@ def simple_channel(wave, alpha=0.08):
 
 
 def tx_eq_pattern(symbols_in, preshoot_db, deemph_db):
+    """
+    Legacy/reference dB amplitude pattern helper.
+
+    The simulator's main TX output path no longer uses this function; both dB
+    mode and tap mode are converted to canonical FIR taps and rendered through
+    tx_fir().
+    """
     va = 1.0
     vb = 10 ** (deemph_db / 20)
     vc = vb * 10 ** (preshoot_db / 20)
@@ -252,7 +256,7 @@ class PCIeTxEqSimulator(QMainWindow):
         layout.addLayout(control_layout)
 
         self.slider_cm1 = self.make_slider(
-            "C-1", 0, 300, int(self.cm1_current * 1000)
+            "C-1", -300, 0, int(self.cm1_current * 1000)
         )
         self.slider_cp1 = self.make_slider(
             "C+1", -300, 0, int(self.cp1_current * 1000)
@@ -269,7 +273,7 @@ class PCIeTxEqSimulator(QMainWindow):
             "Low-pass Alpha", 1, 300, int(self.channel_alpha_current * 1000)
         )
 
-        self.slider_cm1["edit"].setValidator(QDoubleValidator(0.0, 0.3, 4, self))
+        self.slider_cm1["edit"].setValidator(QDoubleValidator(-0.3, 0.0, 4, self))
         self.slider_cp1["edit"].setValidator(QDoubleValidator(-0.3, 0.0, 4, self))
         self.slider_pre["edit"].setValidator(QDoubleValidator(0.0, 6.0, 2, self))
         self.slider_de["edit"].setValidator(QDoubleValidator(-12.0, 0.0, 2, self))
@@ -386,7 +390,7 @@ class PCIeTxEqSimulator(QMainWindow):
                 self.set_edit_text_silent(edit, text)
 
     def enforce_tap_constraint(self, cm1, cp1):
-        cm1 = float(np.clip(abs(cm1), 0.0, 0.3))
+        cm1 = float(np.clip(-abs(cm1), -0.3, 0.0))
         cp1 = float(np.clip(-abs(cp1), -0.3, 0.0))
         if abs(cm1) + abs(cp1) >= 0.49:
             scale = 0.49 / (abs(cm1) + abs(cp1))
@@ -398,12 +402,21 @@ class PCIeTxEqSimulator(QMainWindow):
         self.current_preset = "Custom"
 
     def apply_preset(self, preset_id):
-        pre_db, de_db = PCIE_PRESET_DB_TABLE[preset_id]
-        self.pre_db_current = float(np.clip(pre_db, 0.0, 6.0))
-        self.de_db_current = float(np.clip(de_db, -12.0, 0.0))
-        self.cm1_current, self.cp1_current = db_to_taps(
-            self.pre_db_current, self.de_db_current
-        )
+        if preset_id in PRESET_TAP_TABLE:
+            cm1, cp1 = PRESET_TAP_TABLE[preset_id]
+            self.cm1_current, self.cp1_current = self.enforce_tap_constraint(cm1, cp1)
+            _, _, _, _, pre_db, de_db = calc_levels(self.cm1_current, self.cp1_current)
+            self.pre_db_current = float(np.clip(pre_db, 0.0, 6.0))
+            self.de_db_current = float(np.clip(de_db, -12.0, 0.0))
+        else:
+            # P10 is kept as approximate dB handling until its special preset
+            # behavior is modeled explicitly.
+            pre_db, de_db = PCIE_PRESET_DB_TABLE[preset_id]
+            self.pre_db_current = float(np.clip(pre_db, 0.0, 6.0))
+            self.de_db_current = float(np.clip(de_db, -12.0, 0.0))
+            self.cm1_current, self.cp1_current = db_to_taps(
+                self.pre_db_current, self.de_db_current
+            )
         self.control_mode = "db"
         self.current_preset = f"Preset {preset_id}"
 
@@ -628,10 +641,8 @@ class PCIeTxEqSimulator(QMainWindow):
             self.redraw_all()
 
     def make_tx_symbols(self):
-        if self.control_mode == "tap":
-            tx_sym, _ = tx_fir(self.symbols, self.cm1_current, self.cp1_current)
-            return tx_sym
-        return tx_eq_pattern(self.symbols, self.pre_db_current, self.de_db_current)
+        tx_sym, _ = tx_fir(self.symbols, self.cm1_current, self.cp1_current)
+        return tx_sym
 
     def update_waveform(self, tx_wave, ch_wave):
         length = PLOT_BITS * SPB
@@ -747,7 +758,7 @@ class PCIeTxEqSimulator(QMainWindow):
         }
 
     def update_info(self):
-        c0, va, vb, vc, _, _ = calc_levels(self.cm1_current, self.cp1_current)
+        c0, va, vb, vc, pre_db, de_db = calc_levels(self.cm1_current, self.cp1_current)
 
         text = (
             f"C-1 = {self.cm1_current:.4f}    "
@@ -758,13 +769,15 @@ class PCIeTxEqSimulator(QMainWindow):
             f"Va = {va:.4f}    "
             f"Vb = {vb:.4f}    "
             f"Vc = {vc:.4f}    "
-            f"Preshoot = {self.pre_db_current:.2f} dB    "
-            f"De-emphasis = {self.de_db_current:.2f} dB    "
+            f"De-emphasis = {de_db:.2f} dB    "
+            f"Preshoot = {pre_db:.2f} dB    "
             f"Control Mode = {self.control_mode}    "
             f"Preset = {self.current_preset}    "
             f"Low-pass Alpha = {self.channel_alpha_current:.3f} (smaller = more ISI)\n"
-            f"Approx preset values, not compliance table\n"
-            f"Eye Height = {self.eye_metrics['eye_height']:.4f}    "
+            f"Preset values are approximate and for visualization only. "
+            f"This is not a PCIe compliance tool. "
+            f"Low-pass Alpha is a simplified ISI model, not a real PCIe channel model.\n"
+            f"Approx Eye Height = {self.eye_metrics['eye_height']:.4f}    "
             f"Eye Max = {self.eye_metrics['eye_max']:.4f}    "
             f"Eye Min = {self.eye_metrics['eye_min']:.4f}    "
             f"Center UI spread = {self.eye_metrics['center_spread']:.4f}"
