@@ -19,7 +19,7 @@ SPB = 32
 PLOT_BITS = 64
 EYE_UI = 2
 MAX_EYE_TRACES = 200
-EYE_RENDER_MODE = "line"  # "line" | "density" (reserved)
+# Density eye rendering is not implemented; line eye rendering is always used.
 
 # Approx preset values for simulation only (not PCIe compliance table).
 PCIE_PRESET_DB_TABLE = {
@@ -217,8 +217,8 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.info_text = QPlainTextEdit()
         self.info_text.setReadOnly(True)
-        self.info_text.setMinimumHeight(90)
-        self.info_text.setMaximumHeight(120)
+        self.info_text.setMinimumHeight(120)
+        self.info_text.setMaximumHeight(170)
         self.info_text.setStyleSheet("font-size: 17px;")
         layout.addWidget(self.info_text)
 
@@ -237,6 +237,8 @@ class PCIeTxEqSimulator(QMainWindow):
         self.btn_new_wave.clicked.connect(self.on_generate_new_waveform)
         self.btn_reset_eq = QPushButton("Reset EQ")
         self.btn_reset_eq.clicked.connect(self.on_reset_eq)
+        self.btn_reset_no_eq = QPushButton("Reset to No EQ")
+        self.btn_reset_no_eq.clicked.connect(self.on_reset_no_eq)
         self.btn_reset_channel = QPushButton("Reset Channel")
         self.btn_reset_channel.clicked.connect(self.on_reset_channel)
         self.btn_reset_all = QPushButton("Reset EQ + Channel")
@@ -244,6 +246,7 @@ class PCIeTxEqSimulator(QMainWindow):
         for btn in (
             self.btn_new_wave,
             self.btn_reset_eq,
+            self.btn_reset_no_eq,
             self.btn_reset_channel,
             self.btn_reset_all,
         ):
@@ -576,6 +579,22 @@ class PCIeTxEqSimulator(QMainWindow):
             self.sync_ui_from_state(update_edits=True)
             self.redraw_all()
 
+    def on_reset_no_eq(self):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.pre_db_current = 0.0
+            self.de_db_current = 0.0
+            self.cm1_current, self.cp1_current = db_to_taps(
+                self.pre_db_current, self.de_db_current
+            )
+            self.current_preset = "Preset 4"
+            self.control_mode = "db"
+            self.sync_ui_from_state(update_edits=True)
+            self.redraw_all()
+
     def on_reset_channel(self):
         if self.syncing_ui:
             return
@@ -650,9 +669,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.wave_plot.setYRange(-ymax, ymax)
 
     def update_eye(self, wave):
-        if EYE_RENDER_MODE == "density":
-            self.update_eye_density(wave)
-            return
+        # Density eye is not implemented; always render the line eye diagram.
         self.update_eye_line(wave)
 
     def update_eye_line(self, wave):
@@ -693,17 +710,12 @@ class PCIeTxEqSimulator(QMainWindow):
 
     def update_eye_density(self, wave):
         """
-        Reserved hook for future density-eye rendering.
-        Planned path:
-        1) build (x, y) cloud from eye segments
-        2) np.histogram2d(...)
-        3) self.eye_img.setImage(...)
+        Density eye rendering is not implemented.
+
+        This method is intentionally not reachable from the UI so the simulator
+        does not suggest that density eye mode is available.
         """
-        self.eye_curve.hide()
-        self.eye_img.show()
-        self.eye_img.setImage(np.zeros((2, 2), dtype=float))
-        self.eye_plot.setXRange(0, EYE_UI)
-        self.eye_plot.setYRange(-1.3, 1.3)
+        raise NotImplementedError("Density eye rendering is not implemented.")
 
     def update_eye_metrics(self, wave):
         seg_len = EYE_UI * SPB
@@ -763,7 +775,11 @@ class PCIeTxEqSimulator(QMainWindow):
             f"Control Mode = {self.control_mode}    "
             f"Preset = {self.current_preset}    "
             f"Low-pass Alpha = {self.channel_alpha_current:.3f} (smaller = more ISI)\n"
-            f"Approx preset values, not compliance table\n"
+            f"dB mode: level-based visualization. "
+            f"Tap mode: FIR coefficient reference.\n"
+            f"Preset values are approximate and for visualization only. "
+            f"This is not a PCIe compliance tool. "
+            f"Low-pass Alpha is a simplified ISI model, not a real PCIe channel model.\n"
             f"Eye Height = {self.eye_metrics['eye_height']:.4f}    "
             f"Eye Max = {self.eye_metrics['eye_max']:.4f}    "
             f"Eye Min = {self.eye_metrics['eye_min']:.4f}    "
