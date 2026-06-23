@@ -4,6 +4,11 @@ PCIe TX EQ Preshoot / De-emphasis visualization tool for exploring how TX EQ set
 
 This tool is intended for learning and visualization. It is not a PCIe compliance tool.
 
+## Views
+
+- PCIe Gen1~5 NRZ TX EQ: NRZ Preshoot / De-emphasis visualization, preserving the original dB and tap mode behavior.
+- PCIe Gen6 PAM4 TX EQ: simplified PAM4 waveform and eye visualization with an independent PAM4 control path.
+
 ## Run
 
 ```powershell
@@ -28,6 +33,7 @@ pip install -r requirements.txt
 - Tap mode uses an FIR coefficient reference model.
 - dB mode and tap mode are not guaranteed to produce identical output because they are used for different reference views.
 - The C-1 / C0 / C+1 values shown in dB mode are synchronized reference values, not a replacement for the dB visualization model.
+- The Gen6 PAM4 tab is intentionally separate from the NRZ TX EQ control flow.
 
 ## Presets
 

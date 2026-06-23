@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QSlider, QLineEdit, QPushButton, QComboBox,
-    QPlainTextEdit
+    QPlainTextEdit, QTabWidget
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QDoubleValidator
@@ -19,6 +19,7 @@ SPB = 32
 PLOT_BITS = 64
 EYE_UI = 2
 MAX_EYE_TRACES = 200
+PAM4_SYMBOL_COUNT = 512
 # Density eye rendering is not implemented; line eye rendering is always used.
 
 # Approx preset values for simulation only (not PCIe compliance table).
@@ -151,6 +152,30 @@ def tx_eq_pattern(symbols_in, preshoot_db, deemph_db):
     return y
 
 
+def pam4_symbols_from_random(count):
+    levels = np.array([-3.0, -1.0, 1.0, 3.0], dtype=float) / 3.0
+    return levels[np.random.randint(0, 4, count)]
+
+
+def pam4_fir(symbols_in, pre_tap, post_tap):
+    pre_tap = float(np.clip(pre_tap, -0.25, 0.25))
+    post_tap = float(np.clip(post_tap, -0.25, 0.25))
+    c0 = max(0.0, 1.0 - abs(pre_tap) - abs(post_tap))
+    padded = np.pad(symbols_in, (1, 1), mode="edge")
+    y = []
+    for i in range(1, len(padded) - 1):
+        prev_sym = padded[i - 1]
+        now_sym = padded[i]
+        next_sym = padded[i + 1]
+        out = (
+            pre_tap * next_sym +
+            c0 * now_sym +
+            post_tap * prev_sym
+        )
+        y.append(out)
+    return np.array(y), c0
+
+
 # =========================
 # Main GUI
 # =========================
@@ -182,12 +207,30 @@ class PCIeTxEqSimulator(QMainWindow):
         self.bits = bits.copy()
         self.symbols = symbols.copy()
 
+        self.pam4_pre_tap_current = 0.0
+        self.pam4_post_tap_current = 0.0
+        self.pam4_alpha_current = 0.08
+        self.pam4_symbols = pam4_symbols_from_random(PAM4_SYMBOL_COUNT)
+        self.pam4_eye_metrics = {
+            "eye_opening": 0.0,
+            "center_spread": 0.0,
+        }
+
         self.init_ui()
         self.full_refresh()
+        self.pam4_full_refresh()
 
     def init_ui(self):
         root = QWidget()
-        layout = QVBoxLayout(root)
+        root_layout = QVBoxLayout(root)
+        self.tabs = QTabWidget()
+        self.nrz_tab = QWidget()
+        self.pam4_tab = QWidget()
+        self.tabs.addTab(self.nrz_tab, "PCIe Gen1~5 NRZ TX EQ")
+        self.tabs.addTab(self.pam4_tab, "PCIe Gen6 PAM4 TX EQ")
+        root_layout.addWidget(self.tabs)
+
+        layout = QVBoxLayout(self.nrz_tab)
 
         pg.setConfigOptions(antialias=False)
 
@@ -305,7 +348,81 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_de["edit"].editingFinished.connect(lambda: self.on_edit_change("de"))
         self.slider_alpha["edit"].editingFinished.connect(lambda: self.on_edit_change("alpha"))
 
+        self.init_pam4_tab()
         self.setCentralWidget(root)
+
+    def init_pam4_tab(self):
+        layout = QVBoxLayout(self.pam4_tab)
+
+        self.pam4_wave_plot = pg.PlotWidget(title="PCIe Gen6 PAM4 TX EQ Waveform")
+        self.pam4_wave_plot.setLabel("bottom", "Symbol / UI")
+        self.pam4_wave_plot.setLabel("left", "Normalized Level")
+        self.pam4_wave_plot.showGrid(x=True, y=True)
+
+        self.pam4_eye_plot = pg.PlotWidget(title="PAM4 Eye Diagram after Simplified Channel")
+        self.pam4_eye_plot.setLabel("bottom", "UI")
+        self.pam4_eye_plot.setLabel("left", "Normalized Level")
+        self.pam4_eye_plot.showGrid(x=True, y=True)
+
+        self.pam4_tx_curve = self.pam4_wave_plot.plot(pen=pg.mkPen(width=2))
+        self.pam4_ch_curve = self.pam4_wave_plot.plot(pen=pg.mkPen(width=2, style=Qt.DashLine))
+        self.pam4_eye_curve = self.pam4_eye_plot.plot(pen=pg.mkPen(width=1))
+        self.pam4_tx_curve.setDownsampling(auto=True)
+        self.pam4_ch_curve.setDownsampling(auto=True)
+        self.pam4_tx_curve.setClipToView(True)
+        self.pam4_ch_curve.setClipToView(True)
+
+        layout.addWidget(self.pam4_wave_plot, stretch=4)
+        layout.addWidget(self.pam4_eye_plot, stretch=3)
+
+        self.pam4_info_text = QPlainTextEdit()
+        self.pam4_info_text.setReadOnly(True)
+        self.pam4_info_text.setMinimumHeight(100)
+        self.pam4_info_text.setMaximumHeight(140)
+        self.pam4_info_text.setStyleSheet("font-size: 17px;")
+        layout.addWidget(self.pam4_info_text)
+
+        control_layout = QHBoxLayout()
+        self.btn_pam4_new_wave = QPushButton("Generate New PAM4 Waveform")
+        self.btn_pam4_new_wave.clicked.connect(self.on_pam4_generate_new_waveform)
+        self.btn_pam4_reset_eq = QPushButton("Reset PAM4 EQ")
+        self.btn_pam4_reset_eq.clicked.connect(self.on_pam4_reset_eq)
+        self.btn_pam4_reset_channel = QPushButton("Reset PAM4 Channel")
+        self.btn_pam4_reset_channel.clicked.connect(self.on_pam4_reset_channel)
+        for btn in (
+            self.btn_pam4_new_wave,
+            self.btn_pam4_reset_eq,
+            self.btn_pam4_reset_channel,
+        ):
+            btn.setFixedHeight(24)
+            control_layout.addWidget(btn)
+        layout.addLayout(control_layout)
+
+        self.pam4_slider_pre = self.make_slider(
+            "PAM4 Pre Tap", -250, 250, int(self.pam4_pre_tap_current * 1000)
+        )
+        self.pam4_slider_post = self.make_slider(
+            "PAM4 Post Tap", -250, 250, int(self.pam4_post_tap_current * 1000)
+        )
+        self.pam4_slider_alpha = self.make_slider(
+            "PAM4 Low-pass Alpha", 1, 300, int(self.pam4_alpha_current * 1000)
+        )
+
+        self.pam4_slider_pre["edit"].setValidator(QDoubleValidator(-0.25, 0.25, 4, self))
+        self.pam4_slider_post["edit"].setValidator(QDoubleValidator(-0.25, 0.25, 4, self))
+        self.pam4_slider_alpha["edit"].setValidator(QDoubleValidator(0.001, 0.3, 3, self))
+
+        layout.addLayout(self.pam4_slider_pre["layout"])
+        layout.addLayout(self.pam4_slider_post["layout"])
+        layout.addLayout(self.pam4_slider_alpha["layout"])
+
+        self.pam4_slider_pre["slider"].valueChanged.connect(self.on_pam4_slider_change)
+        self.pam4_slider_post["slider"].valueChanged.connect(self.on_pam4_slider_change)
+        self.pam4_slider_alpha["slider"].valueChanged.connect(self.on_pam4_slider_change)
+
+        self.pam4_slider_pre["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("pre"))
+        self.pam4_slider_post["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("post"))
+        self.pam4_slider_alpha["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("alpha"))
 
     def make_slider(self, name, minimum, maximum, value):
         layout = QHBoxLayout()
@@ -645,6 +762,213 @@ class PCIeTxEqSimulator(QMainWindow):
                 return
             self.sync_ui_from_state(update_edits=True)
             self.redraw_all()
+
+    def pam4_sync_ui_from_state(self, update_edits=True):
+        self.set_slider_value_silent(
+            self.pam4_slider_pre["slider"], int(self.pam4_pre_tap_current * 1000)
+        )
+        self.set_slider_value_silent(
+            self.pam4_slider_post["slider"], int(self.pam4_post_tap_current * 1000)
+        )
+        self.set_slider_value_silent(
+            self.pam4_slider_alpha["slider"], int(self.pam4_alpha_current * 1000)
+        )
+
+        if not update_edits:
+            return
+
+        edit_rows = [
+            (self.pam4_slider_pre["edit"], f"{self.pam4_pre_tap_current:.4f}"),
+            (self.pam4_slider_post["edit"], f"{self.pam4_post_tap_current:.4f}"),
+            (self.pam4_slider_alpha["edit"], f"{self.pam4_alpha_current:.3f}"),
+        ]
+        for edit, text in edit_rows:
+            if not edit.hasFocus():
+                self.set_edit_text_silent(edit, text)
+
+    def on_pam4_slider_change(self):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.pam4_pre_tap_current = self.pam4_slider_pre["slider"].value() / 1000
+            self.pam4_post_tap_current = self.pam4_slider_post["slider"].value() / 1000
+            self.pam4_alpha_current = self.pam4_slider_alpha["slider"].value() / 1000
+            self.pam4_sync_ui_from_state(update_edits=True)
+            self.pam4_redraw_all()
+
+    def on_pam4_edit_change(self, target):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            try:
+                if target == "pre":
+                    value = float(self.pam4_slider_pre["edit"].text())
+                    self.pam4_pre_tap_current = float(np.clip(value, -0.25, 0.25))
+                elif target == "post":
+                    value = float(self.pam4_slider_post["edit"].text())
+                    self.pam4_post_tap_current = float(np.clip(value, -0.25, 0.25))
+                elif target == "alpha":
+                    value = float(self.pam4_slider_alpha["edit"].text())
+                    self.pam4_alpha_current = float(np.clip(value, 0.001, 0.3))
+            except ValueError:
+                self.pam4_sync_ui_from_state(update_edits=True)
+                return
+            self.pam4_sync_ui_from_state(update_edits=True)
+            self.pam4_redraw_all()
+
+    def on_pam4_generate_new_waveform(self):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.pam4_symbols = pam4_symbols_from_random(PAM4_SYMBOL_COUNT)
+            self.pam4_redraw_all()
+
+    def on_pam4_reset_eq(self):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.pam4_pre_tap_current = 0.0
+            self.pam4_post_tap_current = 0.0
+            self.pam4_sync_ui_from_state(update_edits=True)
+            self.pam4_redraw_all()
+
+    def on_pam4_reset_channel(self):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.pam4_alpha_current = 0.08
+            self.pam4_sync_ui_from_state(update_edits=True)
+            self.pam4_redraw_all()
+
+    def pam4_full_refresh(self):
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.pam4_sync_ui_from_state(update_edits=True)
+            self.pam4_redraw_all()
+
+    def pam4_make_tx_symbols(self):
+        tx_sym, _ = pam4_fir(
+            self.pam4_symbols,
+            self.pam4_pre_tap_current,
+            self.pam4_post_tap_current,
+        )
+        return tx_sym
+
+    def pam4_redraw_all(self):
+        tx_sym = self.pam4_make_tx_symbols()
+        tx_wave = np.repeat(tx_sym, SPB)
+        ch_wave = simple_channel(tx_wave, alpha=self.pam4_alpha_current)
+
+        self.update_pam4_waveform(tx_wave, ch_wave)
+        self.update_pam4_eye(ch_wave)
+        self.update_pam4_eye_metrics(ch_wave)
+        self.update_pam4_info()
+
+    def update_pam4_waveform(self, tx_wave, ch_wave):
+        length = PLOT_BITS * SPB
+        t = np.arange(length) / SPB
+
+        self.pam4_tx_curve.setData(t, tx_wave[:length])
+        self.pam4_ch_curve.setData(t, ch_wave[:length])
+        self.pam4_wave_plot.setXRange(0, PLOT_BITS)
+        self.pam4_wave_plot.setYRange(-1.4, 1.4)
+
+    def update_pam4_eye(self, wave):
+        seg_len = EYE_UI * SPB
+        start = 20 * SPB
+        trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
+        if trace_starts.size == 0:
+            self.pam4_eye_curve.setData([], [])
+            self.pam4_eye_plot.setXRange(0, EYE_UI)
+            self.pam4_eye_plot.setYRange(-1.4, 1.4)
+            return
+
+        if trace_starts.size > MAX_EYE_TRACES:
+            idx = np.linspace(0, trace_starts.size - 1, MAX_EYE_TRACES, dtype=int)
+            sampled_starts = trace_starts[idx]
+        else:
+            sampled_starts = trace_starts
+
+        x = np.arange(seg_len, dtype=float) / SPB
+        x_block = np.concatenate([x, [np.nan]])
+        x_all = np.tile(x_block, sampled_starts.size)
+
+        y_all = np.empty(sampled_starts.size * (seg_len + 1), dtype=float)
+        for idx, s in enumerate(sampled_starts):
+            base = idx * (seg_len + 1)
+            y_all[base:base + seg_len] = wave[s:s + seg_len]
+            y_all[base + seg_len] = np.nan
+
+        self.pam4_eye_curve.setData(x_all, y_all)
+        self.pam4_eye_plot.setXRange(0, EYE_UI)
+        self.pam4_eye_plot.setYRange(-1.4, 1.4)
+
+    def update_pam4_eye_metrics(self, wave):
+        seg_len = EYE_UI * SPB
+        start = 20 * SPB
+        trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
+        if trace_starts.size == 0:
+            self.pam4_eye_metrics = {
+                "eye_opening": 0.0,
+                "center_spread": 0.0,
+            }
+            return
+
+        if trace_starts.size > MAX_EYE_TRACES:
+            idx = np.linspace(0, trace_starts.size - 1, MAX_EYE_TRACES, dtype=int)
+            sampled_starts = trace_starts[idx]
+        else:
+            sampled_starts = trace_starts
+
+        segs = np.array([wave[s:s + seg_len] for s in sampled_starts], dtype=float)
+        center_idx = seg_len // 2
+        center_samples = segs[:, center_idx]
+        center_spread = float(np.max(center_samples) - np.min(center_samples))
+
+        lower = center_samples[center_samples < -1 / 3]
+        mid_low = center_samples[(center_samples >= -1 / 3) & (center_samples < 0)]
+        mid_high = center_samples[(center_samples >= 0) & (center_samples < 1 / 3)]
+        upper = center_samples[center_samples >= 1 / 3]
+        openings = []
+        bands = [lower, mid_low, mid_high, upper]
+        for left, right in zip(bands, bands[1:]):
+            if left.size > 0 and right.size > 0:
+                openings.append(float(np.percentile(right, 5) - np.percentile(left, 95)))
+        eye_opening = min(openings) if openings else 0.0
+
+        self.pam4_eye_metrics = {
+            "eye_opening": eye_opening,
+            "center_spread": center_spread,
+        }
+
+    def update_pam4_info(self):
+        _, c0 = pam4_fir(
+            self.pam4_symbols,
+            self.pam4_pre_tap_current,
+            self.pam4_post_tap_current,
+        )
+        text = (
+            f"PAM4 Pre Tap = {self.pam4_pre_tap_current:.4f}    "
+            f"PAM4 C0 = {c0:.4f}    "
+            f"PAM4 Post Tap = {self.pam4_post_tap_current:.4f}    "
+            f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n"
+            f"Gen6 PAM4 tab uses a simplified four-level waveform and independent FIR reference path. "
+            f"It does not share the NRZ dB/tap control flow.\n"
+            f"Estimated PAM4 Eye Opening = {self.pam4_eye_metrics['eye_opening']:.4f}    "
+            f"Center UI spread = {self.pam4_eye_metrics['center_spread']:.4f}"
+        )
+        self.pam4_info_text.setPlainText(text)
 
     def make_tx_symbols(self):
         if self.control_mode == "tap":
