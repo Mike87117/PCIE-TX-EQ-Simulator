@@ -300,6 +300,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_cp1_current = 0.0
         self.pam4_alpha_current = 0.08
         self.pam4_show_detail = False
+        self.pam4_eye_mode = "raw"
         self.pam4_symbols = pam4_symbols_from_random(PAM4_SYMBOL_COUNT)
         self.pam4_eye_metrics = {
             "upper_eye": 0.0,
@@ -491,6 +492,15 @@ class PCIeTxEqSimulator(QMainWindow):
         self.gen6_preset_combo.currentIndexChanged.connect(self.on_gen6_preset_change)
         control_layout.addWidget(preset_label)
         control_layout.addWidget(self.gen6_preset_combo)
+
+        eye_mode_label = QLabel("PAM4 Eye Mode")
+        eye_mode_label.setFixedWidth(120)
+        self.pam4_eye_mode_combo = QComboBox()
+        self.pam4_eye_mode_combo.addItem("Raw Eye")
+        self.pam4_eye_mode_combo.addItem("Centered Eye")
+        self.pam4_eye_mode_combo.currentIndexChanged.connect(self.on_pam4_eye_mode_change)
+        control_layout.addWidget(eye_mode_label)
+        control_layout.addWidget(self.pam4_eye_mode_combo)
 
         self.btn_pam4_new_wave = QPushButton("Generate New PAM4 Waveform")
         self.btn_pam4_new_wave.clicked.connect(self.on_pam4_generate_new_waveform)
@@ -1048,6 +1058,13 @@ class PCIeTxEqSimulator(QMainWindow):
             self.pam4_sync_ui_from_state(update_edits=True)
             self.pam4_redraw_all()
 
+    def on_pam4_eye_mode_change(self, _index):
+        if self.syncing_ui:
+            return
+        mode_text = self.pam4_eye_mode_combo.currentText()
+        self.pam4_eye_mode = "centered" if mode_text == "Centered Eye" else "raw"
+        self.pam4_redraw_all()
+
     def on_toggle_pam4_detail(self):
         self.pam4_show_detail = not self.pam4_show_detail
         self.btn_pam4_detail.setText("Hide Detail" if self.pam4_show_detail else "Show Detail")
@@ -1089,6 +1106,12 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_wave_plot.setYRange(-1.4, 1.4)
 
     def update_pam4_eye(self, wave):
+        if self.pam4_eye_mode == "centered":
+            self.update_pam4_eye_centered(wave)
+        else:
+            self.update_pam4_eye_raw(wave)
+
+    def update_pam4_eye_raw(self, wave):
         seg_len = EYE_UI * SPB
         start = 20 * SPB
         trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
@@ -1117,6 +1140,43 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_eye_curve.setData(x_all, y_all)
         self.pam4_eye_plot.setXRange(0, EYE_UI)
         self.pam4_eye_plot.setYRange(-1.4, 1.4)
+
+    def update_pam4_eye_centered(self, wave):
+        seg_len = EYE_UI * SPB
+        start = 20 * SPB
+        trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
+        if trace_starts.size == 0:
+            self.pam4_eye_curve.setData([], [])
+            self.pam4_eye_plot.setXRange(0, EYE_UI)
+            self.pam4_eye_plot.setYRange(-0.8, 0.8)
+            return
+
+        if trace_starts.size > MAX_EYE_TRACES:
+            idx = np.linspace(0, trace_starts.size - 1, MAX_EYE_TRACES, dtype=int)
+            sampled_starts = trace_starts[idx]
+        else:
+            sampled_starts = trace_starts
+
+        x = np.arange(seg_len, dtype=float) / SPB
+        x_block = np.concatenate([x, [np.nan]])
+        x_all = np.tile(x_block, sampled_starts.size)
+
+        y_all = np.empty(sampled_starts.size * (seg_len + 1), dtype=float)
+        center_idx = seg_len // 2
+        for idx, s in enumerate(sampled_starts):
+            base = idx * (seg_len + 1)
+            segment = wave[s:s + seg_len].copy()
+            center_sample = segment[center_idx]
+            if center_sample >= 1 / 3:
+                segment -= 2 / 3
+            elif center_sample < -1 / 3:
+                segment += 2 / 3
+            y_all[base:base + seg_len] = segment
+            y_all[base + seg_len] = np.nan
+
+        self.pam4_eye_curve.setData(x_all, y_all)
+        self.pam4_eye_plot.setXRange(0, EYE_UI)
+        self.pam4_eye_plot.setYRange(-0.8, 0.8)
 
     def update_pam4_eye_metrics(self, wave):
         seg_len = EYE_UI * SPB
@@ -1203,6 +1263,7 @@ class PCIeTxEqSimulator(QMainWindow):
             vc2_ratio = vc2 / vd
         else:
             va_ratio = vb_ratio = vc1_ratio = vc2_ratio = 0.0
+        eye_mode_text = "Centered Eye" if self.pam4_eye_mode == "centered" else "Raw Eye"
         q10_note = ""
         if self.gen6_preset_current == "Q10":
             q10_note = (
@@ -1232,19 +1293,22 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Preshoot 1 = {pre1_db:.2f} dB    "
                 f"Preshoot 2 = {pre2_db:.2f} dB    "
                 f"Boost = {boost_db:.2f} dB    "
-                f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n\n"
+                f"Low-pass Alpha = {self.pam4_alpha_current:.3f}    "
+                f"Eye Mode = {eye_mode_text}\n\n"
                 f"Eye Metrics: Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
                 f"Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
                 f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
                 f"Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
                 f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
                 f"Note: simplified visualization only. "
-                f"This is not a PCIe compliance calculator.{q10_note}"
+                f"This is not a PCIe compliance calculator. "
+                f"Centered Eye shifts Upper / Middle / Lower eye regions to the same vertical center for easier comparison.{q10_note}"
             )
         else:
             text = (
                 "Teaching Focus: PAM4 has 4 levels and 3 eyes; this tab uses simplified 4-tap FIR.\n"
-                f"Preset = {self.gen6_preset_current}    Low-pass Alpha = {self.pam4_alpha_current:.3f}\n"
+                f"Preset = {self.gen6_preset_current}    Low-pass Alpha = {self.pam4_alpha_current:.3f}    "
+                f"Eye Mode = {eye_mode_text}\n"
                 f"C-2 = {self.pam4_cm2_current:.4f}    C-1 = {self.pam4_cm1_current:.4f}    "
                 f"C0 = {c0:.4f}    C+1 = {self.pam4_cp1_current:.4f}\n"
                 f"De-emphasis = {de_db:.2f} dB    Preshoot 1 = {pre1_db:.2f} dB    "
