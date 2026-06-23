@@ -736,7 +736,7 @@ class PCIeTxEqSimulator(QMainWindow):
             self.de_db_current = float(np.clip(de_db, -12.0, 0.0))
             self.sync_ui_from_state(update_edits=True)
             if self.is_any_slider_down():
-                self.update_waveform_only()
+                self.update_nrz_realtime()
             else:
                 self.redraw_all()
 
@@ -756,7 +756,7 @@ class PCIeTxEqSimulator(QMainWindow):
             )
             self.sync_ui_from_state(update_edits=True)
             if self.is_any_slider_down():
-                self.update_waveform_only()
+                self.update_nrz_realtime()
             else:
                 self.redraw_all()
 
@@ -770,7 +770,7 @@ class PCIeTxEqSimulator(QMainWindow):
             self.channel_alpha_current = self.slider_alpha["slider"].value() / 1000
             self.sync_ui_from_state(update_edits=True)
             if self.is_any_slider_down():
-                self.update_waveform_only()
+                self.update_nrz_realtime()
             else:
                 self.redraw_all()
 
@@ -869,6 +869,16 @@ class PCIeTxEqSimulator(QMainWindow):
         ch_wave = simple_channel(tx_wave, alpha=self.channel_alpha_current)
 
         self.update_waveform(tx_wave, ch_wave)
+
+    def update_nrz_realtime(self):
+        tx_sym = self.make_tx_symbols()
+        tx_wave = np.repeat(tx_sym, SPB)
+        ch_wave = simple_channel(tx_wave, alpha=self.channel_alpha_current)
+
+        self.update_waveform(tx_wave, ch_wave)
+        self.update_eye(ch_wave)
+        self.update_eye_metrics(ch_wave)
+        self.update_info()
 
     def redraw_all(self):
         tx_sym = self.make_tx_symbols()
