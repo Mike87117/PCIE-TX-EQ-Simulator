@@ -70,6 +70,9 @@ The Gen6 tab visualizes simplified PAM4 TX EQ concepts:
 - C0 is calculated automatically from C-2, C-1, and C+1.
 - The Q0~Q10 selector is for visualization.
 - Q10 is special / Note 2 and is not explicitly modeled; selecting Q10 resets coefficients to Q0 for visualization safety.
+- PAM4 eye diagram is a simplified raw eye visualization.
+- The simulator does not model oscilloscope CDR, trigger recovery, or scope-style PAM4 eye alignment.
+- Upper / Middle / Lower eye metrics are approximate visualization values.
 
 The Gen6 PAM4 control path is separate from the Gen1~5 NRZ control path.
 
@@ -82,5 +85,6 @@ Low-pass Alpha is a simplified ISI demonstration. It is not a real PCIe channel 
 - This is not a PCIe compliance tool.
 - Preset values are approximate and for visualization only.
 - Eye metrics are approximate visualization values.
+- PAM4 eye diagram is raw 2 UI visualization, not scope-style recovered eye alignment.
 - The channel model is simplified.
 - Density eye mode is not implemented.
