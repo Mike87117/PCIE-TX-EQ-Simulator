@@ -15,6 +15,26 @@ This project is for learning concepts, not for compliance testing, preset coeffi
 python PCIETXEQ5.py
 ```
 
+## How to Use
+
+1. Start with the Gen1~5 NRZ tab.
+2. Click Reset to No EQ to observe the baseline waveform.
+3. Adjust Preshoot and De-emphasis to see how the waveform and eye diagram change.
+4. Switch to the Gen6 PAM4 tab.
+5. Try Q0 first, then Q2 / Q4 / Q6 / Q9 to compare different 4-tap FIR effects.
+6. Observe the PAM4 waveform and Upper / Middle / Lower eye openings.
+7. Adjust Low-pass Alpha to see the simplified ISI impact.
+
+## Recommended Teaching Flow
+
+1. No EQ baseline
+2. De-emphasis only
+3. Preshoot only
+4. Mixed Preshoot + De-emphasis
+5. PAM4 level introduction
+6. Gen6 4-tap FIR comparison
+7. Eye diagram comparison
+
 ## Requirements
 
 - numpy

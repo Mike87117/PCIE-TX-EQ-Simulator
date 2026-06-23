@@ -1182,18 +1182,22 @@ class PCIeTxEqSimulator(QMainWindow):
                 "Coefficients are reset to Q0 for visualization safety."
             )
         text = (
+            "Teaching Focus: PAM4 uses four levels. "
+            "PAM4 has three eye openings: Upper / Middle / Lower. "
+            "This tab uses a simplified 4-tap FIR concept. "
+            "C0 is automatically calculated from C-2 / C-1 / C+1.\n\n"
             f"Preset / Tap: Gen6 Preset = {self.gen6_preset_current}    "
             f"C-2 = {self.pam4_cm2_current:.4f}    "
             f"C-1 = {self.pam4_cm1_current:.4f}    "
             f"C0 = {c0:.4f}    "
             f"C+1 = {self.pam4_cp1_current:.4f}    "
             f"TapSum = {tap_sum:.4f}\n\n"
-            f"Level: Va = {va:.4f}    "
+            f"Level / Ratio: Va = {va:.4f}    "
             f"Vb = {vb:.4f}    "
             f"Vc1 = {vc1:.4f}    "
             f"Vc2 = {vc2:.4f}    "
-            f"Vd = {vd:.4f}\n\n"
-            f"Ratio: Va/Vd = {va_ratio:.3f}    "
+            f"Vd = {vd:.4f}\n"
+            f"Va/Vd = {va_ratio:.3f}    "
             f"Vb/Vd = {vb_ratio:.3f}    "
             f"Vc1/Vd = {vc1_ratio:.3f}    "
             f"Vc2/Vd = {vc2_ratio:.3f}\n\n"
@@ -1207,8 +1211,8 @@ class PCIeTxEqSimulator(QMainWindow):
             f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
             f"Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
             f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
-            f"Notes: PCIe Gen6 PAM4 tab uses a simplified 4-tap TX FIR visualization model for 64.0 GT/s concepts. "
-            f"It is not a PCIe compliance calculator.{q10_note}"
+            f"Note: simplified visualization only. "
+            f"This is not a PCIe compliance calculator.{q10_note}"
         )
         self.pam4_info_text.setPlainText(text)
 
@@ -1326,30 +1330,32 @@ class PCIeTxEqSimulator(QMainWindow):
 
     def update_info(self):
         c0, va, vb, vc, _, _ = calc_levels(self.cm1_current, self.cp1_current)
+        tap_sum = abs(self.cm1_current) + abs(c0) + abs(self.cp1_current)
 
         text = (
-            f"C-1 = {self.cm1_current:.4f}    "
+            "Teaching Focus: Preshoot raises the last bit before a transition. "
+            "De-emphasis lowers repeated bits. "
+            "dB mode is for level-based visualization. "
+            "Tap mode is a FIR coefficient reference.\n\n"
+            f"EQ State: Preset = {self.current_preset}    "
+            f"Control Mode = {self.control_mode}    "
+            f"Preshoot = {self.pre_db_current:.2f} dB    "
+            f"De-emphasis = {self.de_db_current:.2f} dB    "
+            f"Low-pass Alpha = {self.channel_alpha_current:.3f} (smaller = more ISI)\n\n"
+            f"Tap / Level Reference: C-1 = {self.cm1_current:.4f}    "
             f"C0 = {c0:.4f}    "
             f"C+1 = {self.cp1_current:.4f}    "
-            f"|C-1| + |C0| + |C+1| = "
-            f"{abs(self.cm1_current) + abs(c0) + abs(self.cp1_current):.4f}\n"
             f"Va = {va:.4f}    "
             f"Vb = {vb:.4f}    "
             f"Vc = {vc:.4f}    "
-            f"Preshoot = {self.pre_db_current:.2f} dB    "
-            f"De-emphasis = {self.de_db_current:.2f} dB    "
-            f"Control Mode = {self.control_mode}    "
-            f"Preset = {self.current_preset}    "
-            f"Low-pass Alpha = {self.channel_alpha_current:.3f} (smaller = more ISI)\n"
-            f"dB mode: level-based visualization. "
-            f"Tap mode: FIR coefficient reference.\n"
-            f"Preset values are approximate and for visualization only. "
-            f"This is not a PCIe compliance tool. "
-            f"Low-pass Alpha is a simplified ISI model, not a real PCIe channel model.\n"
-            f"Eye Height = {self.eye_metrics['eye_height']:.4f}    "
+            f"TapSum = {tap_sum:.4f}\n\n"
+            f"Eye Metrics: Eye Height = {self.eye_metrics['eye_height']:.4f}    "
             f"Eye Max = {self.eye_metrics['eye_max']:.4f}    "
             f"Eye Min = {self.eye_metrics['eye_min']:.4f}    "
-            f"Center UI spread = {self.eye_metrics['center_spread']:.4f}"
+            f"Center UI Spread = {self.eye_metrics['center_spread']:.4f}\n\n"
+            f"Note: This is a teaching simulator, not a PCIe compliance tool. "
+            f"Preset values are approximate and for visualization only. "
+            f"Low-pass Alpha is a simplified ISI model, not a real PCIe channel model."
         )
 
         self.info_text.setPlainText(text)
