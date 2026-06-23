@@ -262,32 +262,6 @@ def gen6_pam4_fir(symbols_in, cm2, cm1, cp1):
     return np.array(y), c0
 
 
-def estimate_pam4_eye_phase(wave):
-    start = 20 * SPB
-    if len(wave) <= start + SPB:
-        return None
-
-    diff = np.abs(np.diff(wave))
-    valid_diff = diff[start:]
-    if valid_diff.size == 0:
-        return None
-
-    threshold = np.percentile(valid_diff, 90)
-    if threshold <= 1e-9:
-        return None
-
-    candidate_indices = np.where(valid_diff > threshold)[0] + start
-    if candidate_indices.size < 10:
-        return None
-
-    phases = candidate_indices % SPB
-    hist = np.bincount(phases, minlength=SPB)
-    if hist.size == 0 or np.max(hist) == 0:
-        return None
-
-    return int(np.argmax(hist))
-
-
 # =========================
 # Main GUI
 # =========================
@@ -1169,17 +1143,20 @@ class PCIeTxEqSimulator(QMainWindow):
 
     def update_pam4_eye_centered(self, wave):
         seg_len = EYE_UI * SPB
-        start = 20 * SPB
-        phase_offset = estimate_pam4_eye_phase(wave)
-        if phase_offset is None:
-            trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
-        else:
-            first_center = start + ((phase_offset - start) % SPB)
-            center_positions = np.arange(first_center, len(wave) - SPB, SPB, dtype=int)
-            trace_starts = center_positions - SPB
-            trace_starts = trace_starts[
-                (trace_starts >= 0) & (trace_starts + seg_len <= len(wave))
-            ]
+        half_seg = seg_len // 2
+        start_symbol = 20
+
+        decision_centers = np.arange(
+            start_symbol * SPB + SPB // 2,
+            len(wave) - half_seg,
+            SPB,
+            dtype=int,
+        )
+
+        trace_starts = decision_centers - half_seg
+        trace_starts = trace_starts[
+            (trace_starts >= 0) & (trace_starts + seg_len <= len(wave))
+        ]
         if trace_starts.size == 0:
             self.pam4_eye_curve.setData([], [])
             self.pam4_eye_plot.setXRange(0, EYE_UI, padding=0)
@@ -1329,7 +1306,7 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
                 f"Note: simplified visualization only. "
                 f"This is not a PCIe compliance calculator. "
-                f"Centered Eye estimates a common PAM4 eye timing phase and re-slices the waveform so the eye center is near x = 1 UI. "
+                f"Centered Eye slices each 2 UI trace around the known PAM4 symbol decision center, so x = 1 UI represents the eye center. "
                 f"The PAM4 levels and three eyes remain unchanged.{q10_note}"
             )
         else:
