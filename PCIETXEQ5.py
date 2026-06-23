@@ -202,9 +202,10 @@ def validate_gen6_presets():
     header = (
         "Preset  C-2     C-1      C0      C+1      Va      Vb      "
         "Vc1     Vc2     Vd      Va/Vd   Vb/Vd   Vc1/Vd  Vc2/Vd  "
-        "Pre1    Pre2    De      Boost   TapSum  OK"
+        "Pre1    Pre2    De      Boost   TapSum  Status"
     )
     print(header)
+    print("-" * len(header))
     for preset_name in sorted(
         PCIE_GEN6_PRESET_TAP_TABLE,
         key=lambda name: int(name[1:]),
@@ -224,12 +225,12 @@ def validate_gen6_presets():
         ) = calc_gen6_levels(cm2, cm1, cp1)
         tap_sum = abs(cm2) + abs(cm1) + abs(c0) + abs(cp1)
         if vd > 0:
-            va_ratio = va / vd
-            vb_ratio = vb / vd
-            vc1_ratio = vc1 / vd
-            vc2_ratio = vc2 / vd
+            va_ratio = f"{va / vd:7.3f}"
+            vb_ratio = f"{vb / vd:7.3f}"
+            vc1_ratio = f"{vc1 / vd:7.3f}"
+            vc2_ratio = f"{vc2 / vd:7.3f}"
         else:
-            va_ratio = vb_ratio = vc1_ratio = vc2_ratio = 0.0
+            va_ratio = vb_ratio = vc1_ratio = vc2_ratio = "    N/A"
         ok = (
             cm2 >= 0
             and cm1 <= 0
@@ -238,13 +239,14 @@ def validate_gen6_presets():
             and abs(tap_sum - 1.0) < 1e-9
             and vd > 0
         )
+        status = "PASS" if ok else "FAIL"
         print(
             f"{preset_name:<6} "
             f"{cm2:6.3f} {cm1:7.3f} {c0:7.3f} {cp1:7.3f} "
             f"{va:7.3f} {vb:7.3f} {vc1:7.3f} {vc2:7.3f} {vd:7.3f} "
-            f"{va_ratio:7.3f} {vb_ratio:7.3f} {vc1_ratio:7.3f} {vc2_ratio:7.3f} "
+            f"{va_ratio} {vb_ratio} {vc1_ratio} {vc2_ratio} "
             f"{pre1_db:7.2f} {pre2_db:7.2f} {de_db:7.2f} {boost_db:7.2f} "
-            f"{tap_sum:7.3f} {ok}"
+            f"{tap_sum:7.3f} {status}"
         )
 
 
@@ -1188,32 +1190,32 @@ class PCIeTxEqSimulator(QMainWindow):
                 "Coefficients are reset to Q0 for visualization safety."
             )
         text = (
-            f"Gen6 Preset = {self.gen6_preset_current}    "
+            f"Preset / Tap: Gen6 Preset = {self.gen6_preset_current}    "
             f"C-2 = {self.pam4_cm2_current:.4f}    "
             f"C-1 = {self.pam4_cm1_current:.4f}    "
             f"C0 = {c0:.4f}    "
             f"C+1 = {self.pam4_cp1_current:.4f}    "
-            f"|C-2| + |C-1| + |C0| + |C+1| = {tap_sum:.4f}\n"
-            f"Va = {va:.4f}    "
+            f"TapSum = {tap_sum:.4f}\n\n"
+            f"Level: Va = {va:.4f}    "
             f"Vb = {vb:.4f}    "
             f"Vc1 = {vc1:.4f}    "
             f"Vc2 = {vc2:.4f}    "
-            f"Vd = {vd:.4f}\n"
-            f"Ratios: Va/Vd = {va_ratio:.3f}    "
+            f"Vd = {vd:.4f}\n\n"
+            f"Ratio: Va/Vd = {va_ratio:.3f}    "
             f"Vb/Vd = {vb_ratio:.3f}    "
             f"Vc1/Vd = {vc1_ratio:.3f}    "
-            f"Vc2/Vd = {vc2_ratio:.3f}\n"
-            f"De-emphasis = {de_db:.2f} dB    "
+            f"Vc2/Vd = {vc2_ratio:.3f}\n\n"
+            f"dB Metrics: De-emphasis = {de_db:.2f} dB    "
             f"Preshoot 1 = {pre1_db:.2f} dB    "
             f"Preshoot 2 = {pre2_db:.2f} dB    "
             f"Boost = {boost_db:.2f} dB    "
-            f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n"
-            f"Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
+            f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n\n"
+            f"Eye Metrics: Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
             f"Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
             f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
             f"Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
-            f"Center UI spread = {self.pam4_eye_metrics['center_spread']:.4f}\n"
-            f"PCIe Gen6 PAM4 tab uses a simplified 4-tap TX FIR visualization model for 64.0 GT/s concepts. "
+            f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
+            f"Notes: PCIe Gen6 PAM4 tab uses a simplified 4-tap TX FIR visualization model for 64.0 GT/s concepts. "
             f"It is not a PCIe compliance calculator.{q10_note}"
         )
         self.pam4_info_text.setPlainText(text)
@@ -1362,8 +1364,10 @@ class PCIeTxEqSimulator(QMainWindow):
 
 
 if __name__ == "__main__":
-    # Uncomment when you want a console table for Q0~Q9 preset sanity checks.
-    # validate_gen6_presets()
+    if "--validate-gen6" in sys.argv:
+        validate_gen6_presets()
+        sys.exit(0)
+
     app = QApplication(sys.argv)
     win = PCIeTxEqSimulator()
     win.show()

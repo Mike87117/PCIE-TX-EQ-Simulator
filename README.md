@@ -15,6 +15,22 @@ This tool is intended for learning and visualization. It is not a PCIe complianc
 python PCIETXEQ5.py
 ```
 
+## Gen6 Preset Validation
+
+```powershell
+python PCIETXEQ5.py --validate-gen6
+```
+
+This command prints the Q0~Q9 Gen6 preset validation table and does not launch the GUI.
+
+The table shows:
+
+- C-2 / C-1 / C0 / C+1
+- Va/Vd, Vb/Vd, Vc1/Vd, Vc2/Vd
+- Preshoot 1, Preshoot 2, De-emphasis, Boost
+
+Q10 is special / Note 2 and is not explicitly modeled. Selecting Q10 in the GUI resets coefficients to Q0 for visualization safety.
+
 ## Requirements
 
 - numpy
@@ -44,7 +60,7 @@ pip install -r requirements.txt
 - Q10 is special / Note 2 and is not explicitly modeled.
 - Selecting Q10 resets coefficients to Q0 for visualization safety.
 - The Gen6 info panel shows Va/Vd, Vb/Vd, Vc1/Vd, and Vc2/Vd for comparison with preset ratio tables.
-- `validate_gen6_presets()` can be used manually to print a preset validation table.
+- `python PCIETXEQ5.py --validate-gen6` can be used to print a preset validation table without launching the GUI.
 - PAM4 eye openings are approximate visualization values only.
 - The Gen6 PAM4 tab is intentionally separate from the NRZ TX EQ control flow.
 
