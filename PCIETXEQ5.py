@@ -468,6 +468,27 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_ch_curve.setDownsampling(auto=True)
         self.pam4_tx_curve.setClipToView(True)
         self.pam4_ch_curve.setClipToView(True)
+        guide_pen = pg.mkPen((210, 170, 60), width=1, style=Qt.DashLine)
+        self.pam4_center_x_line = pg.InfiniteLine(
+            pos=1.0, angle=90, movable=False, pen=guide_pen
+        )
+        self.pam4_upper_eye_center_line = pg.InfiniteLine(
+            pos=2 / 3, angle=0, movable=False, pen=guide_pen
+        )
+        self.pam4_middle_eye_center_line = pg.InfiniteLine(
+            pos=0.0, angle=0, movable=False, pen=guide_pen
+        )
+        self.pam4_lower_eye_center_line = pg.InfiniteLine(
+            pos=-2 / 3, angle=0, movable=False, pen=guide_pen
+        )
+        for line in (
+            self.pam4_center_x_line,
+            self.pam4_upper_eye_center_line,
+            self.pam4_middle_eye_center_line,
+            self.pam4_lower_eye_center_line,
+        ):
+            line.hide()
+            self.pam4_eye_plot.addItem(line)
 
         layout.addWidget(self.pam4_wave_plot, stretch=4)
         layout.addWidget(self.pam4_eye_plot, stretch=3)
@@ -1105,6 +1126,15 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_wave_plot.setXRange(0, PLOT_BITS)
         self.pam4_wave_plot.setYRange(-1.4, 1.4)
 
+    def set_pam4_center_guides_visible(self, visible):
+        for line in (
+            self.pam4_center_x_line,
+            self.pam4_upper_eye_center_line,
+            self.pam4_middle_eye_center_line,
+            self.pam4_lower_eye_center_line,
+        ):
+            line.setVisible(visible)
+
     def update_pam4_eye(self, wave):
         if self.pam4_eye_mode == "centered":
             self.update_pam4_eye_centered(wave)
@@ -1112,6 +1142,7 @@ class PCIeTxEqSimulator(QMainWindow):
             self.update_pam4_eye_raw(wave)
 
     def update_pam4_eye_raw(self, wave):
+        self.set_pam4_center_guides_visible(False)
         seg_len = EYE_UI * SPB
         start = 20 * SPB
         trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
@@ -1142,13 +1173,14 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_eye_plot.setYRange(-1.4, 1.4)
 
     def update_pam4_eye_centered(self, wave):
+        self.set_pam4_center_guides_visible(True)
         seg_len = EYE_UI * SPB
         start = 20 * SPB
         trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
         if trace_starts.size == 0:
             self.pam4_eye_curve.setData([], [])
             self.pam4_eye_plot.setXRange(0, EYE_UI)
-            self.pam4_eye_plot.setYRange(-0.8, 0.8)
+            self.pam4_eye_plot.setYRange(-1.4, 1.4)
             return
 
         if trace_starts.size > MAX_EYE_TRACES:
@@ -1162,21 +1194,14 @@ class PCIeTxEqSimulator(QMainWindow):
         x_all = np.tile(x_block, sampled_starts.size)
 
         y_all = np.empty(sampled_starts.size * (seg_len + 1), dtype=float)
-        center_idx = seg_len // 2
         for idx, s in enumerate(sampled_starts):
             base = idx * (seg_len + 1)
-            segment = wave[s:s + seg_len].copy()
-            center_sample = segment[center_idx]
-            if center_sample >= 1 / 3:
-                segment -= 2 / 3
-            elif center_sample < -1 / 3:
-                segment += 2 / 3
-            y_all[base:base + seg_len] = segment
+            y_all[base:base + seg_len] = wave[s:s + seg_len]
             y_all[base + seg_len] = np.nan
 
         self.pam4_eye_curve.setData(x_all, y_all)
         self.pam4_eye_plot.setXRange(0, EYE_UI)
-        self.pam4_eye_plot.setYRange(-0.8, 0.8)
+        self.pam4_eye_plot.setYRange(-1.4, 1.4)
 
     def update_pam4_eye_metrics(self, wave):
         seg_len = EYE_UI * SPB
@@ -1302,7 +1327,7 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
                 f"Note: simplified visualization only. "
                 f"This is not a PCIe compliance calculator. "
-                f"Centered Eye shifts Upper / Middle / Lower eye regions to the same vertical center for easier comparison.{q10_note}"
+                f"Centered Eye keeps all three PAM4 eyes in place and shows center reference lines at x = 1 UI and y = +2/3, 0, -2/3.{q10_note}"
             )
         else:
             text = (
