@@ -262,51 +262,30 @@ def gen6_pam4_fir(symbols_in, cm2, cm1, cp1):
     return np.array(y), c0
 
 
-def estimate_pam4_crossing_x(segment):
-    seg_len = len(segment)
-    if seg_len < EYE_UI * SPB:
+def estimate_pam4_eye_phase(wave):
+    start = 20 * SPB
+    if len(wave) <= start + SPB:
         return None
 
-    left_window = segment[int(0.10 * SPB):int(0.30 * SPB)]
-    right_window = segment[int(1.70 * SPB):int(1.90 * SPB)]
-    if left_window.size == 0 or right_window.size == 0:
+    diff = np.abs(np.diff(wave))
+    valid_diff = diff[start:]
+    if valid_diff.size == 0:
         return None
 
-    start_level = float(np.median(left_window))
-    end_level = float(np.median(right_window))
-    if abs(end_level - start_level) < 0.10:
+    threshold = np.percentile(valid_diff, 90)
+    if threshold <= 1e-9:
         return None
 
-    crossing_threshold = (start_level + end_level) / 2
-    search_start = int(0.40 * SPB)
-    search_end = min(int(1.60 * SPB), seg_len - 1)
-    if search_end <= search_start:
+    candidate_indices = np.where(valid_diff > threshold)[0] + start
+    if candidate_indices.size < 10:
         return None
 
-    values = segment[search_start:search_end + 1] - crossing_threshold
-    candidates = []
-    for offset in range(values.size - 1):
-        y0 = values[offset]
-        y1 = values[offset + 1]
-        if y0 == 0:
-            crossing_sample = search_start + offset
-        elif y0 * y1 <= 0:
-            denom = abs(y0) + abs(y1)
-            if denom <= 1e-12:
-                continue
-            frac = abs(y0) / denom
-            crossing_sample = search_start + offset + frac
-        else:
-            continue
-
-        crossing_x = crossing_sample / SPB
-        if 0.40 <= crossing_x <= 1.60:
-            candidates.append(crossing_x)
-
-    if not candidates:
+    phases = candidate_indices % SPB
+    hist = np.bincount(phases, minlength=SPB)
+    if hist.size == 0 or np.max(hist) == 0:
         return None
 
-    return min(candidates, key=lambda value: abs(value - 1.0))
+    return int(np.argmax(hist))
 
 
 # =========================
@@ -1191,7 +1170,16 @@ class PCIeTxEqSimulator(QMainWindow):
     def update_pam4_eye_centered(self, wave):
         seg_len = EYE_UI * SPB
         start = 20 * SPB
-        trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
+        phase_offset = estimate_pam4_eye_phase(wave)
+        if phase_offset is None:
+            trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
+        else:
+            first_center = start + ((phase_offset - start) % SPB)
+            center_positions = np.arange(first_center, len(wave) - SPB, SPB, dtype=int)
+            trace_starts = center_positions - SPB
+            trace_starts = trace_starts[
+                (trace_starts >= 0) & (trace_starts + seg_len <= len(wave))
+            ]
         if trace_starts.size == 0:
             self.pam4_eye_curve.setData([], [])
             self.pam4_eye_plot.setXRange(0, EYE_UI, padding=0)
@@ -1205,18 +1193,12 @@ class PCIeTxEqSimulator(QMainWindow):
             sampled_starts = trace_starts
 
         x = np.arange(seg_len, dtype=float) / SPB
-        x_all = np.empty(sampled_starts.size * (seg_len + 1), dtype=float)
+        x_block = np.concatenate([x, [np.nan]])
+        x_all = np.tile(x_block, sampled_starts.size)
         y_all = np.empty(sampled_starts.size * (seg_len + 1), dtype=float)
         for idx, s in enumerate(sampled_starts):
             base = idx * (seg_len + 1)
-            segment = wave[s:s + seg_len]
-            x_shift = 0.0
-            crossing_x = estimate_pam4_crossing_x(segment)
-            if crossing_x is not None:
-                x_shift = float(np.clip(1.0 - crossing_x, -0.35, 0.35))
-            x_all[base:base + seg_len] = x + x_shift
-            y_all[base:base + seg_len] = segment
-            x_all[base + seg_len] = np.nan
+            y_all[base:base + seg_len] = wave[s:s + seg_len]
             y_all[base + seg_len] = np.nan
 
         self.pam4_eye_curve.setData(x_all, y_all)
@@ -1347,7 +1329,7 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
                 f"Note: simplified visualization only. "
                 f"This is not a PCIe compliance calculator. "
-                f"Centered Eye horizontally shifts each eye trace using detected threshold crossing so transition centers align near x = 1 UI. "
+                f"Centered Eye estimates a common PAM4 eye timing phase and re-slices the waveform so the eye center is near x = 1 UI. "
                 f"The PAM4 levels and three eyes remain unchanged.{q10_note}"
             )
         else:
