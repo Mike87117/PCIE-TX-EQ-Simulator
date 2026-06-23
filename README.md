@@ -7,7 +7,7 @@ This tool is intended for learning and visualization. It is not a PCIe complianc
 ## Views
 
 - PCIe Gen1~5 NRZ TX EQ: NRZ Preshoot / De-emphasis visualization, preserving the original dB and tap mode behavior.
-- PCIe Gen6 PAM4 TX EQ: simplified PAM4 waveform and eye visualization with an independent PAM4 control path.
+- PCIe Gen6 PAM4 TX EQ: simplified 4-tap PAM4 TX FIR waveform and eye visualization with an independent PAM4 control path.
 
 ## Run
 
@@ -27,12 +27,21 @@ Install dependencies with:
 pip install -r requirements.txt
 ```
 
-## Model Notes
+## Gen1~5 NRZ Model Notes
 
 - dB mode uses a level-based visualization model.
 - Tap mode uses an FIR coefficient reference model.
 - dB mode and tap mode are not guaranteed to produce identical output because they are used for different reference views.
 - The C-1 / C0 / C+1 values shown in dB mode are synchronized reference values, not a replacement for the dB visualization model.
+
+## Gen6 PAM4 Model Notes
+
+- The Gen6 PAM4 tab uses a simplified 4-tap TX FIR visualization model.
+- The displayed coefficients are C-2 / C-1 / C0 / C+1.
+- C0 is calculated automatically from the other taps.
+- The Gen6 preset selector includes Q0 through Q10.
+- Q10 is special / Note 2 and is not explicitly modeled.
+- PAM4 eye openings are approximate visualization values only.
 - The Gen6 PAM4 tab is intentionally separate from the NRZ TX EQ control flow.
 
 ## Presets

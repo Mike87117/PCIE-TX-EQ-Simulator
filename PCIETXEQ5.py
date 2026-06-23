@@ -37,6 +37,19 @@ PCIE_PRESET_DB_TABLE = {
     10: (0.0, -9.5),
 }
 
+PCIE_GEN6_PRESET_TAP_TABLE = {
+    "Q0": (0.000, 0.000, 0.000),
+    "Q1": (0.000, -0.083, 0.000),
+    "Q2": (0.000, -0.167, 0.000),
+    "Q3": (0.000, 0.000, -0.083),
+    "Q4": (0.000, 0.000, -0.167),
+    "Q5": (0.042, -0.208, 0.000),
+    "Q6": (0.042, -0.125, -0.125),
+    "Q7": (0.083, -0.208, 0.000),
+    "Q8": (0.083, -0.250, 0.000),
+    "Q9": (0.083, -0.250, -0.042),
+}
+
 np.random.seed(7)
 bits = np.random.randint(0, 2, BIT_COUNT)
 symbols = 2 * bits - 1
@@ -157,20 +170,49 @@ def pam4_symbols_from_random(count):
     return levels[np.random.randint(0, 4, count)]
 
 
-def pam4_fir(symbols_in, pre_tap, post_tap):
-    pre_tap = float(np.clip(pre_tap, -0.25, 0.25))
-    post_tap = float(np.clip(post_tap, -0.25, 0.25))
-    c0 = max(0.0, 1.0 - abs(pre_tap) - abs(post_tap))
-    padded = np.pad(symbols_in, (1, 1), mode="edge")
+def constrain_gen6_taps(cm2, cm1, cp1):
+    cm2 = float(np.clip(abs(cm2), 0.0, 0.25))
+    cm1 = float(np.clip(-abs(cm1), -0.30, 0.0))
+    cp1 = float(np.clip(-abs(cp1), -0.25, 0.0))
+    tap_sum = abs(cm2) + abs(cm1) + abs(cp1)
+    if tap_sum >= 0.95:
+        scale = 0.95 / tap_sum
+        cm2 *= scale
+        cm1 *= scale
+        cp1 *= scale
+    return cm2, cm1, cp1
+
+
+def calc_gen6_levels(cm2, cm1, cp1):
+    cm2, cm1, cp1 = constrain_gen6_taps(cm2, cm1, cp1)
+    c0 = 1.0 - abs(cm2) - abs(cm1) - abs(cp1)
+    va = abs(cm2 + cm1 + c0 - cp1)
+    vb = abs(cm2 + cm1 + c0 + cp1)
+    vc1 = abs(cm2 - cm1 + c0 + cp1)
+    vc2 = abs(-cm2 + cm1 + c0 + cp1)
+    vd = abs(cm2 - cm1 + c0 - cp1)
+    de_db = 20 * np.log10(vb / va) if va > 0 and vb > 0 else -99
+    pre1_db = 20 * np.log10(vc1 / vb) if vb > 0 and vc1 > 0 else -99
+    pre2_db = 20 * np.log10(vc2 / vb) if vb > 0 and vc2 > 0 else -99
+    boost_db = 20 * np.log10(vd / vb) if vb > 0 and vd > 0 else -99
+    return c0, va, vb, vc1, vc2, vd, pre1_db, pre2_db, de_db, boost_db
+
+
+def gen6_pam4_fir(symbols_in, cm2, cm1, cp1):
+    cm2, cm1, cp1 = constrain_gen6_taps(cm2, cm1, cp1)
+    c0 = 1.0 - abs(cm2) - abs(cm1) - abs(cp1)
+    padded = np.pad(symbols_in, (2, 1), mode="edge")
     y = []
-    for i in range(1, len(padded) - 1):
+    for i in range(2, len(padded) - 1):
+        prev2_sym = padded[i - 2]
         prev_sym = padded[i - 1]
         now_sym = padded[i]
         next_sym = padded[i + 1]
         out = (
-            pre_tap * next_sym +
+            cm2 * prev2_sym +
+            cm1 * prev_sym +
             c0 * now_sym +
-            post_tap * prev_sym
+            cp1 * next_sym
         )
         y.append(out)
     return np.array(y), c0
@@ -207,12 +249,17 @@ class PCIeTxEqSimulator(QMainWindow):
         self.bits = bits.copy()
         self.symbols = symbols.copy()
 
-        self.pam4_pre_tap_current = 0.0
-        self.pam4_post_tap_current = 0.0
+        self.gen6_preset_current = "Q0"
+        self.pam4_cm2_current = 0.0
+        self.pam4_cm1_current = 0.0
+        self.pam4_cp1_current = 0.0
         self.pam4_alpha_current = 0.08
         self.pam4_symbols = pam4_symbols_from_random(PAM4_SYMBOL_COUNT)
         self.pam4_eye_metrics = {
-            "eye_opening": 0.0,
+            "upper_eye": 0.0,
+            "middle_eye": 0.0,
+            "lower_eye": 0.0,
+            "minimum_eye": 0.0,
             "center_spread": 0.0,
         }
 
@@ -383,6 +430,19 @@ class PCIeTxEqSimulator(QMainWindow):
         layout.addWidget(self.pam4_info_text)
 
         control_layout = QHBoxLayout()
+        preset_label = QLabel("Gen6 Preset")
+        preset_label.setFixedWidth(120)
+        self.gen6_preset_combo = QComboBox()
+        self.gen6_preset_combo.addItem("Custom")
+        for q in range(11):
+            label = f"Q{q}"
+            if q == 10:
+                label = "Q10 (special / Note 2)"
+            self.gen6_preset_combo.addItem(label)
+        self.gen6_preset_combo.currentIndexChanged.connect(self.on_gen6_preset_change)
+        control_layout.addWidget(preset_label)
+        control_layout.addWidget(self.gen6_preset_combo)
+
         self.btn_pam4_new_wave = QPushButton("Generate New PAM4 Waveform")
         self.btn_pam4_new_wave.clicked.connect(self.on_pam4_generate_new_waveform)
         self.btn_pam4_reset_eq = QPushButton("Reset PAM4 EQ")
@@ -398,30 +458,37 @@ class PCIeTxEqSimulator(QMainWindow):
             control_layout.addWidget(btn)
         layout.addLayout(control_layout)
 
-        self.pam4_slider_pre = self.make_slider(
-            "PAM4 Pre Tap", -250, 250, int(self.pam4_pre_tap_current * 1000)
+        self.pam4_slider_cm2 = self.make_slider(
+            "C-2", 0, 250, int(self.pam4_cm2_current * 1000)
         )
-        self.pam4_slider_post = self.make_slider(
-            "PAM4 Post Tap", -250, 250, int(self.pam4_post_tap_current * 1000)
+        self.pam4_slider_cm1 = self.make_slider(
+            "C-1", -300, 0, int(self.pam4_cm1_current * 1000)
+        )
+        self.pam4_slider_cp1 = self.make_slider(
+            "C+1", -250, 0, int(self.pam4_cp1_current * 1000)
         )
         self.pam4_slider_alpha = self.make_slider(
             "PAM4 Low-pass Alpha", 1, 300, int(self.pam4_alpha_current * 1000)
         )
 
-        self.pam4_slider_pre["edit"].setValidator(QDoubleValidator(-0.25, 0.25, 4, self))
-        self.pam4_slider_post["edit"].setValidator(QDoubleValidator(-0.25, 0.25, 4, self))
+        self.pam4_slider_cm2["edit"].setValidator(QDoubleValidator(0.0, 0.25, 4, self))
+        self.pam4_slider_cm1["edit"].setValidator(QDoubleValidator(-0.30, 0.0, 4, self))
+        self.pam4_slider_cp1["edit"].setValidator(QDoubleValidator(-0.25, 0.0, 4, self))
         self.pam4_slider_alpha["edit"].setValidator(QDoubleValidator(0.001, 0.3, 3, self))
 
-        layout.addLayout(self.pam4_slider_pre["layout"])
-        layout.addLayout(self.pam4_slider_post["layout"])
+        layout.addLayout(self.pam4_slider_cm2["layout"])
+        layout.addLayout(self.pam4_slider_cm1["layout"])
+        layout.addLayout(self.pam4_slider_cp1["layout"])
         layout.addLayout(self.pam4_slider_alpha["layout"])
 
-        self.pam4_slider_pre["slider"].valueChanged.connect(self.on_pam4_slider_change)
-        self.pam4_slider_post["slider"].valueChanged.connect(self.on_pam4_slider_change)
+        self.pam4_slider_cm2["slider"].valueChanged.connect(self.on_pam4_slider_change)
+        self.pam4_slider_cm1["slider"].valueChanged.connect(self.on_pam4_slider_change)
+        self.pam4_slider_cp1["slider"].valueChanged.connect(self.on_pam4_slider_change)
         self.pam4_slider_alpha["slider"].valueChanged.connect(self.on_pam4_slider_change)
 
-        self.pam4_slider_pre["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("pre"))
-        self.pam4_slider_post["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("post"))
+        self.pam4_slider_cm2["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("cm2"))
+        self.pam4_slider_cm1["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("cm1"))
+        self.pam4_slider_cp1["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("cp1"))
         self.pam4_slider_alpha["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("alpha"))
 
     def make_slider(self, name, minimum, maximum, value):
@@ -765,26 +832,68 @@ class PCIeTxEqSimulator(QMainWindow):
 
     def pam4_sync_ui_from_state(self, update_edits=True):
         self.set_slider_value_silent(
-            self.pam4_slider_pre["slider"], int(self.pam4_pre_tap_current * 1000)
+            self.pam4_slider_cm2["slider"], int(self.pam4_cm2_current * 1000)
         )
         self.set_slider_value_silent(
-            self.pam4_slider_post["slider"], int(self.pam4_post_tap_current * 1000)
+            self.pam4_slider_cm1["slider"], int(self.pam4_cm1_current * 1000)
+        )
+        self.set_slider_value_silent(
+            self.pam4_slider_cp1["slider"], int(self.pam4_cp1_current * 1000)
         )
         self.set_slider_value_silent(
             self.pam4_slider_alpha["slider"], int(self.pam4_alpha_current * 1000)
         )
+        self.gen6_preset_combo.blockSignals(True)
+        try:
+            target = self.gen6_preset_current
+            if target == "Q10":
+                target = "Q10 (special / Note 2)"
+            idx = self.gen6_preset_combo.findText(target)
+            if idx >= 0:
+                self.gen6_preset_combo.setCurrentIndex(idx)
+        finally:
+            self.gen6_preset_combo.blockSignals(False)
 
         if not update_edits:
             return
 
         edit_rows = [
-            (self.pam4_slider_pre["edit"], f"{self.pam4_pre_tap_current:.4f}"),
-            (self.pam4_slider_post["edit"], f"{self.pam4_post_tap_current:.4f}"),
+            (self.pam4_slider_cm2["edit"], f"{self.pam4_cm2_current:.4f}"),
+            (self.pam4_slider_cm1["edit"], f"{self.pam4_cm1_current:.4f}"),
+            (self.pam4_slider_cp1["edit"], f"{self.pam4_cp1_current:.4f}"),
             (self.pam4_slider_alpha["edit"], f"{self.pam4_alpha_current:.3f}"),
         ]
         for edit, text in edit_rows:
             if not edit.hasFocus():
                 self.set_edit_text_silent(edit, text)
+
+    def apply_gen6_preset(self, preset_name):
+        if preset_name == "Custom":
+            self.gen6_preset_current = "Custom"
+            return
+
+        if preset_name.startswith("Q10"):
+            self.gen6_preset_current = "Q10"
+            return
+
+        if preset_name in PCIE_GEN6_PRESET_TAP_TABLE:
+            self.pam4_cm2_current, self.pam4_cm1_current, self.pam4_cp1_current = (
+                PCIE_GEN6_PRESET_TAP_TABLE[preset_name]
+            )
+            self.gen6_preset_current = preset_name
+
+    def on_gen6_preset_change(self, _index):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.apply_gen6_preset(self.gen6_preset_combo.currentText())
+            self.pam4_sync_ui_from_state(update_edits=True)
+            self.pam4_redraw_all()
+
+    def set_gen6_custom_preset(self):
+        self.gen6_preset_current = "Custom"
 
     def on_pam4_slider_change(self):
         if self.syncing_ui:
@@ -792,8 +901,13 @@ class PCIeTxEqSimulator(QMainWindow):
         with self.ui_sync() as active:
             if not active:
                 return
-            self.pam4_pre_tap_current = self.pam4_slider_pre["slider"].value() / 1000
-            self.pam4_post_tap_current = self.pam4_slider_post["slider"].value() / 1000
+            self.set_gen6_custom_preset()
+            cm2 = self.pam4_slider_cm2["slider"].value() / 1000
+            cm1 = self.pam4_slider_cm1["slider"].value() / 1000
+            cp1 = self.pam4_slider_cp1["slider"].value() / 1000
+            self.pam4_cm2_current, self.pam4_cm1_current, self.pam4_cp1_current = (
+                constrain_gen6_taps(cm2, cm1, cp1)
+            )
             self.pam4_alpha_current = self.pam4_slider_alpha["slider"].value() / 1000
             self.pam4_sync_ui_from_state(update_edits=True)
             self.pam4_redraw_all()
@@ -805,12 +919,24 @@ class PCIeTxEqSimulator(QMainWindow):
             if not active:
                 return
             try:
-                if target == "pre":
-                    value = float(self.pam4_slider_pre["edit"].text())
-                    self.pam4_pre_tap_current = float(np.clip(value, -0.25, 0.25))
-                elif target == "post":
-                    value = float(self.pam4_slider_post["edit"].text())
-                    self.pam4_post_tap_current = float(np.clip(value, -0.25, 0.25))
+                if target == "cm2":
+                    self.set_gen6_custom_preset()
+                    value = float(self.pam4_slider_cm2["edit"].text())
+                    self.pam4_cm2_current, self.pam4_cm1_current, self.pam4_cp1_current = (
+                        constrain_gen6_taps(value, self.pam4_cm1_current, self.pam4_cp1_current)
+                    )
+                elif target == "cm1":
+                    self.set_gen6_custom_preset()
+                    value = float(self.pam4_slider_cm1["edit"].text())
+                    self.pam4_cm2_current, self.pam4_cm1_current, self.pam4_cp1_current = (
+                        constrain_gen6_taps(self.pam4_cm2_current, value, self.pam4_cp1_current)
+                    )
+                elif target == "cp1":
+                    self.set_gen6_custom_preset()
+                    value = float(self.pam4_slider_cp1["edit"].text())
+                    self.pam4_cm2_current, self.pam4_cm1_current, self.pam4_cp1_current = (
+                        constrain_gen6_taps(self.pam4_cm2_current, self.pam4_cm1_current, value)
+                    )
                 elif target == "alpha":
                     value = float(self.pam4_slider_alpha["edit"].text())
                     self.pam4_alpha_current = float(np.clip(value, 0.001, 0.3))
@@ -835,8 +961,10 @@ class PCIeTxEqSimulator(QMainWindow):
         with self.ui_sync() as active:
             if not active:
                 return
-            self.pam4_pre_tap_current = 0.0
-            self.pam4_post_tap_current = 0.0
+            self.gen6_preset_current = "Q0"
+            self.pam4_cm2_current = 0.0
+            self.pam4_cm1_current = 0.0
+            self.pam4_cp1_current = 0.0
             self.pam4_sync_ui_from_state(update_edits=True)
             self.pam4_redraw_all()
 
@@ -858,10 +986,11 @@ class PCIeTxEqSimulator(QMainWindow):
             self.pam4_redraw_all()
 
     def pam4_make_tx_symbols(self):
-        tx_sym, _ = pam4_fir(
+        tx_sym, _ = gen6_pam4_fir(
             self.pam4_symbols,
-            self.pam4_pre_tap_current,
-            self.pam4_post_tap_current,
+            self.pam4_cm2_current,
+            self.pam4_cm1_current,
+            self.pam4_cp1_current,
         )
         return tx_sym
 
@@ -920,7 +1049,10 @@ class PCIeTxEqSimulator(QMainWindow):
         trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
         if trace_starts.size == 0:
             self.pam4_eye_metrics = {
-                "eye_opening": 0.0,
+                "upper_eye": 0.0,
+                "middle_eye": 0.0,
+                "lower_eye": 0.0,
+                "minimum_eye": 0.0,
                 "center_spread": 0.0,
             }
             return
@@ -936,36 +1068,85 @@ class PCIeTxEqSimulator(QMainWindow):
         center_samples = segs[:, center_idx]
         center_spread = float(np.max(center_samples) - np.min(center_samples))
 
-        lower = center_samples[center_samples < -1 / 3]
-        mid_low = center_samples[(center_samples >= -1 / 3) & (center_samples < 0)]
-        mid_high = center_samples[(center_samples >= 0) & (center_samples < 1 / 3)]
-        upper = center_samples[center_samples >= 1 / 3]
-        openings = []
-        bands = [lower, mid_low, mid_high, upper]
-        for left, right in zip(bands, bands[1:]):
-            if left.size > 0 and right.size > 0:
-                openings.append(float(np.percentile(right, 5) - np.percentile(left, 95)))
-        eye_opening = min(openings) if openings else 0.0
+        lower_band = center_samples[center_samples < -2 / 3]
+        mid_low_band = center_samples[
+            (center_samples >= -2 / 3) & (center_samples < 0)
+        ]
+        mid_high_band = center_samples[
+            (center_samples >= 0) & (center_samples < 2 / 3)
+        ]
+        upper_band = center_samples[center_samples >= 2 / 3]
+
+        def eye_gap(left, right):
+            if left.size == 0 or right.size == 0:
+                return 0.0
+            return float(np.percentile(right, 5) - np.percentile(left, 95))
+
+        lower_eye = eye_gap(lower_band, mid_low_band)
+        middle_eye = eye_gap(mid_low_band, mid_high_band)
+        upper_eye = eye_gap(mid_high_band, upper_band)
+        positive_openings = [
+            value for value in (upper_eye, middle_eye, lower_eye) if value > 0
+        ]
+        minimum_eye = min(positive_openings) if positive_openings else 0.0
 
         self.pam4_eye_metrics = {
-            "eye_opening": eye_opening,
+            "upper_eye": upper_eye,
+            "middle_eye": middle_eye,
+            "lower_eye": lower_eye,
+            "minimum_eye": minimum_eye,
             "center_spread": center_spread,
         }
 
     def update_pam4_info(self):
-        _, c0 = pam4_fir(
-            self.pam4_symbols,
-            self.pam4_pre_tap_current,
-            self.pam4_post_tap_current,
+        (
+            c0,
+            va,
+            vb,
+            vc1,
+            vc2,
+            vd,
+            pre1_db,
+            pre2_db,
+            de_db,
+            boost_db,
+        ) = calc_gen6_levels(
+            self.pam4_cm2_current,
+            self.pam4_cm1_current,
+            self.pam4_cp1_current,
         )
+        tap_sum = (
+            abs(self.pam4_cm2_current)
+            + abs(self.pam4_cm1_current)
+            + abs(c0)
+            + abs(self.pam4_cp1_current)
+        )
+        q10_note = ""
+        if self.gen6_preset_current == "Q10":
+            q10_note = " Q10 is a special preset / Note 2 and is not explicitly modeled."
         text = (
-            f"PAM4 Pre Tap = {self.pam4_pre_tap_current:.4f}    "
-            f"PAM4 C0 = {c0:.4f}    "
-            f"PAM4 Post Tap = {self.pam4_post_tap_current:.4f}    "
+            f"Gen6 Preset = {self.gen6_preset_current}    "
+            f"C-2 = {self.pam4_cm2_current:.4f}    "
+            f"C-1 = {self.pam4_cm1_current:.4f}    "
+            f"C0 = {c0:.4f}    "
+            f"C+1 = {self.pam4_cp1_current:.4f}    "
+            f"|C-2| + |C-1| + |C0| + |C+1| = {tap_sum:.4f}\n"
+            f"Va = {va:.4f}    "
+            f"Vb = {vb:.4f}    "
+            f"Vc1 = {vc1:.4f}    "
+            f"Vc2 = {vc2:.4f}    "
+            f"Vd = {vd:.4f}\n"
+            f"De-emphasis = {de_db:.2f} dB    "
+            f"Preshoot 1 = {pre1_db:.2f} dB    "
+            f"Preshoot 2 = {pre2_db:.2f} dB    "
+            f"Boost = {boost_db:.2f} dB    "
             f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n"
-            f"Gen6 PAM4 tab uses a simplified four-level waveform and independent FIR reference path. "
-            f"It does not share the NRZ dB/tap control flow.\n"
-            f"Estimated PAM4 Eye Opening = {self.pam4_eye_metrics['eye_opening']:.4f}    "
+            f"PCIe Gen6 PAM4 tab uses a simplified 4-tap TX FIR visualization model for 64.0 GT/s concepts. "
+            f"It is not a PCIe compliance calculator.{q10_note}\n"
+            f"Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
+            f"Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
+            f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
+            f"Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
             f"Center UI spread = {self.pam4_eye_metrics['center_spread']:.4f}"
         )
         self.pam4_info_text.setPlainText(text)
