@@ -40,7 +40,11 @@ pip install -r requirements.txt
 - The displayed coefficients are C-2 / C-1 / C0 / C+1.
 - C0 is calculated automatically from the other taps.
 - The Gen6 preset selector includes Q0 through Q10.
+- The Gen6 tab includes Q0~Q9 coefficient presets.
 - Q10 is special / Note 2 and is not explicitly modeled.
+- Selecting Q10 resets coefficients to Q0 for visualization safety.
+- The Gen6 info panel shows Va/Vd, Vb/Vd, Vc1/Vd, and Vc2/Vd for comparison with preset ratio tables.
+- `validate_gen6_presets()` can be used manually to print a preset validation table.
 - PAM4 eye openings are approximate visualization values only.
 - The Gen6 PAM4 tab is intentionally separate from the NRZ TX EQ control flow.
 

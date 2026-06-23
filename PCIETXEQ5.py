@@ -198,6 +198,56 @@ def calc_gen6_levels(cm2, cm1, cp1):
     return c0, va, vb, vc1, vc2, vd, pre1_db, pre2_db, de_db, boost_db
 
 
+def validate_gen6_presets():
+    header = (
+        "Preset  C-2     C-1      C0      C+1      Va      Vb      "
+        "Vc1     Vc2     Vd      Va/Vd   Vb/Vd   Vc1/Vd  Vc2/Vd  "
+        "Pre1    Pre2    De      Boost   TapSum  OK"
+    )
+    print(header)
+    for preset_name in sorted(
+        PCIE_GEN6_PRESET_TAP_TABLE,
+        key=lambda name: int(name[1:]),
+    ):
+        cm2, cm1, cp1 = PCIE_GEN6_PRESET_TAP_TABLE[preset_name]
+        (
+            c0,
+            va,
+            vb,
+            vc1,
+            vc2,
+            vd,
+            pre1_db,
+            pre2_db,
+            de_db,
+            boost_db,
+        ) = calc_gen6_levels(cm2, cm1, cp1)
+        tap_sum = abs(cm2) + abs(cm1) + abs(c0) + abs(cp1)
+        if vd > 0:
+            va_ratio = va / vd
+            vb_ratio = vb / vd
+            vc1_ratio = vc1 / vd
+            vc2_ratio = vc2 / vd
+        else:
+            va_ratio = vb_ratio = vc1_ratio = vc2_ratio = 0.0
+        ok = (
+            cm2 >= 0
+            and cm1 <= 0
+            and cp1 <= 0
+            and c0 >= 0
+            and abs(tap_sum - 1.0) < 1e-9
+            and vd > 0
+        )
+        print(
+            f"{preset_name:<6} "
+            f"{cm2:6.3f} {cm1:7.3f} {c0:7.3f} {cp1:7.3f} "
+            f"{va:7.3f} {vb:7.3f} {vc1:7.3f} {vc2:7.3f} {vd:7.3f} "
+            f"{va_ratio:7.3f} {vb_ratio:7.3f} {vc1_ratio:7.3f} {vc2_ratio:7.3f} "
+            f"{pre1_db:7.2f} {pre2_db:7.2f} {de_db:7.2f} {boost_db:7.2f} "
+            f"{tap_sum:7.3f} {ok}"
+        )
+
+
 def gen6_pam4_fir(symbols_in, cm2, cm1, cp1):
     cm2, cm1, cp1 = constrain_gen6_taps(cm2, cm1, cp1)
     c0 = 1.0 - abs(cm2) - abs(cm1) - abs(cp1)
@@ -424,8 +474,8 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.pam4_info_text = QPlainTextEdit()
         self.pam4_info_text.setReadOnly(True)
-        self.pam4_info_text.setMinimumHeight(100)
-        self.pam4_info_text.setMaximumHeight(140)
+        self.pam4_info_text.setMinimumHeight(150)
+        self.pam4_info_text.setMaximumHeight(210)
         self.pam4_info_text.setStyleSheet("font-size: 17px;")
         layout.addWidget(self.pam4_info_text)
 
@@ -874,6 +924,9 @@ class PCIeTxEqSimulator(QMainWindow):
 
         if preset_name.startswith("Q10"):
             self.gen6_preset_current = "Q10"
+            self.pam4_cm2_current = 0.0
+            self.pam4_cm1_current = 0.0
+            self.pam4_cp1_current = 0.0
             return
 
         if preset_name in PCIE_GEN6_PRESET_TAP_TABLE:
@@ -1121,9 +1174,19 @@ class PCIeTxEqSimulator(QMainWindow):
             + abs(c0)
             + abs(self.pam4_cp1_current)
         )
+        if vd > 0:
+            va_ratio = va / vd
+            vb_ratio = vb / vd
+            vc1_ratio = vc1 / vd
+            vc2_ratio = vc2 / vd
+        else:
+            va_ratio = vb_ratio = vc1_ratio = vc2_ratio = 0.0
         q10_note = ""
         if self.gen6_preset_current == "Q10":
-            q10_note = " Q10 is a special preset / Note 2 and is not explicitly modeled."
+            q10_note = (
+                " Q10 is a special preset / Note 2 and is not explicitly modeled. "
+                "Coefficients are reset to Q0 for visualization safety."
+            )
         text = (
             f"Gen6 Preset = {self.gen6_preset_current}    "
             f"C-2 = {self.pam4_cm2_current:.4f}    "
@@ -1136,18 +1199,22 @@ class PCIeTxEqSimulator(QMainWindow):
             f"Vc1 = {vc1:.4f}    "
             f"Vc2 = {vc2:.4f}    "
             f"Vd = {vd:.4f}\n"
+            f"Ratios: Va/Vd = {va_ratio:.3f}    "
+            f"Vb/Vd = {vb_ratio:.3f}    "
+            f"Vc1/Vd = {vc1_ratio:.3f}    "
+            f"Vc2/Vd = {vc2_ratio:.3f}\n"
             f"De-emphasis = {de_db:.2f} dB    "
             f"Preshoot 1 = {pre1_db:.2f} dB    "
             f"Preshoot 2 = {pre2_db:.2f} dB    "
             f"Boost = {boost_db:.2f} dB    "
             f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n"
-            f"PCIe Gen6 PAM4 tab uses a simplified 4-tap TX FIR visualization model for 64.0 GT/s concepts. "
-            f"It is not a PCIe compliance calculator.{q10_note}\n"
             f"Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
             f"Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
             f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
             f"Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
-            f"Center UI spread = {self.pam4_eye_metrics['center_spread']:.4f}"
+            f"Center UI spread = {self.pam4_eye_metrics['center_spread']:.4f}\n"
+            f"PCIe Gen6 PAM4 tab uses a simplified 4-tap TX FIR visualization model for 64.0 GT/s concepts. "
+            f"It is not a PCIe compliance calculator.{q10_note}"
         )
         self.pam4_info_text.setPlainText(text)
 
@@ -1295,6 +1362,8 @@ class PCIeTxEqSimulator(QMainWindow):
 
 
 if __name__ == "__main__":
+    # Uncomment when you want a console table for Q0~Q9 preset sanity checks.
+    # validate_gen6_presets()
     app = QApplication(sys.argv)
     win = PCIeTxEqSimulator()
     win.show()
