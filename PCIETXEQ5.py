@@ -277,6 +277,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.control_mode = "db"
         self.current_preset = "Custom"
         self.channel_alpha_current = 0.08
+        self.nrz_show_detail = False
 
         self.pre_db_current = 1.5
         self.de_db_current = -3.5
@@ -298,6 +299,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_cm1_current = 0.0
         self.pam4_cp1_current = 0.0
         self.pam4_alpha_current = 0.08
+        self.pam4_show_detail = False
         self.pam4_symbols = pam4_symbols_from_random(PAM4_SYMBOL_COUNT)
         self.pam4_eye_metrics = {
             "upper_eye": 0.0,
@@ -352,7 +354,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.info_text = QPlainTextEdit()
         self.info_text.setReadOnly(True)
         self.info_text.setMinimumHeight(120)
-        self.info_text.setMaximumHeight(170)
+        self.info_text.setMaximumHeight(150)
         self.info_text.setStyleSheet("font-size: 17px;")
         layout.addWidget(self.info_text)
 
@@ -377,12 +379,15 @@ class PCIeTxEqSimulator(QMainWindow):
         self.btn_reset_channel.clicked.connect(self.on_reset_channel)
         self.btn_reset_all = QPushButton("Reset EQ + Channel")
         self.btn_reset_all.clicked.connect(self.on_reset_all)
+        self.btn_nrz_detail = QPushButton("Show Detail")
+        self.btn_nrz_detail.clicked.connect(self.on_toggle_nrz_detail)
         for btn in (
             self.btn_new_wave,
             self.btn_reset_eq,
             self.btn_reset_no_eq,
             self.btn_reset_channel,
             self.btn_reset_all,
+            self.btn_nrz_detail,
         ):
             btn.setFixedHeight(24)
             control_layout.addWidget(btn)
@@ -468,8 +473,8 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.pam4_info_text = QPlainTextEdit()
         self.pam4_info_text.setReadOnly(True)
-        self.pam4_info_text.setMinimumHeight(150)
-        self.pam4_info_text.setMaximumHeight(210)
+        self.pam4_info_text.setMinimumHeight(140)
+        self.pam4_info_text.setMaximumHeight(170)
         self.pam4_info_text.setStyleSheet("font-size: 17px;")
         layout.addWidget(self.pam4_info_text)
 
@@ -493,10 +498,13 @@ class PCIeTxEqSimulator(QMainWindow):
         self.btn_pam4_reset_eq.clicked.connect(self.on_pam4_reset_eq)
         self.btn_pam4_reset_channel = QPushButton("Reset PAM4 Channel")
         self.btn_pam4_reset_channel.clicked.connect(self.on_pam4_reset_channel)
+        self.btn_pam4_detail = QPushButton("Show Detail")
+        self.btn_pam4_detail.clicked.connect(self.on_toggle_pam4_detail)
         for btn in (
             self.btn_pam4_new_wave,
             self.btn_pam4_reset_eq,
             self.btn_pam4_reset_channel,
+            self.btn_pam4_detail,
         ):
             btn.setFixedHeight(24)
             control_layout.addWidget(btn)
@@ -850,6 +858,11 @@ class PCIeTxEqSimulator(QMainWindow):
             self.sync_ui_from_state(update_edits=True)
             self.redraw_all()
 
+    def on_toggle_nrz_detail(self):
+        self.nrz_show_detail = not self.nrz_show_detail
+        self.btn_nrz_detail.setText("Hide Detail" if self.nrz_show_detail else "Show Detail")
+        self.update_info()
+
     def update_waveform_only(self):
         tx_sym = self.make_tx_symbols()
         tx_wave = np.repeat(tx_sym, SPB)
@@ -1025,6 +1038,11 @@ class PCIeTxEqSimulator(QMainWindow):
             self.pam4_sync_ui_from_state(update_edits=True)
             self.pam4_redraw_all()
 
+    def on_toggle_pam4_detail(self):
+        self.pam4_show_detail = not self.pam4_show_detail
+        self.btn_pam4_detail.setText("Hide Detail" if self.pam4_show_detail else "Show Detail")
+        self.update_pam4_info()
+
     def pam4_full_refresh(self):
         with self.ui_sync() as active:
             if not active:
@@ -1181,39 +1199,51 @@ class PCIeTxEqSimulator(QMainWindow):
                 " Q10 is a special preset / Note 2 and is not explicitly modeled. "
                 "Coefficients are reset to Q0 for visualization safety."
             )
-        text = (
-            "Teaching Focus: PAM4 uses four levels. "
-            "PAM4 has three eye openings: Upper / Middle / Lower. "
-            "This tab uses a simplified 4-tap FIR concept. "
-            "C0 is automatically calculated from C-2 / C-1 / C+1.\n\n"
-            f"Preset / Tap: Gen6 Preset = {self.gen6_preset_current}    "
-            f"C-2 = {self.pam4_cm2_current:.4f}    "
-            f"C-1 = {self.pam4_cm1_current:.4f}    "
-            f"C0 = {c0:.4f}    "
-            f"C+1 = {self.pam4_cp1_current:.4f}    "
-            f"TapSum = {tap_sum:.4f}\n\n"
-            f"Level / Ratio: Va = {va:.4f}    "
-            f"Vb = {vb:.4f}    "
-            f"Vc1 = {vc1:.4f}    "
-            f"Vc2 = {vc2:.4f}    "
-            f"Vd = {vd:.4f}\n"
-            f"Va/Vd = {va_ratio:.3f}    "
-            f"Vb/Vd = {vb_ratio:.3f}    "
-            f"Vc1/Vd = {vc1_ratio:.3f}    "
-            f"Vc2/Vd = {vc2_ratio:.3f}\n\n"
-            f"dB Metrics: De-emphasis = {de_db:.2f} dB    "
-            f"Preshoot 1 = {pre1_db:.2f} dB    "
-            f"Preshoot 2 = {pre2_db:.2f} dB    "
-            f"Boost = {boost_db:.2f} dB    "
-            f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n\n"
-            f"Eye Metrics: Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
-            f"Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
-            f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
-            f"Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
-            f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
-            f"Note: simplified visualization only. "
-            f"This is not a PCIe compliance calculator.{q10_note}"
-        )
+        if self.pam4_show_detail:
+            text = (
+                "Teaching Focus: PAM4 uses four levels and three eyes; this tab uses a simplified 4-tap FIR concept. "
+                "C0 is automatically calculated from C-2 / C-1 / C+1.\n\n"
+                f"Preset / Tap: Gen6 Preset = {self.gen6_preset_current}    "
+                f"C-2 = {self.pam4_cm2_current:.4f}    "
+                f"C-1 = {self.pam4_cm1_current:.4f}    "
+                f"C0 = {c0:.4f}    "
+                f"C+1 = {self.pam4_cp1_current:.4f}    "
+                f"TapSum = {tap_sum:.4f}\n\n"
+                f"Level / Ratio: Va = {va:.4f}    "
+                f"Vb = {vb:.4f}    "
+                f"Vc1 = {vc1:.4f}    "
+                f"Vc2 = {vc2:.4f}    "
+                f"Vd = {vd:.4f}\n"
+                f"Va/Vd = {va_ratio:.3f}    "
+                f"Vb/Vd = {vb_ratio:.3f}    "
+                f"Vc1/Vd = {vc1_ratio:.3f}    "
+                f"Vc2/Vd = {vc2_ratio:.3f}\n\n"
+                f"dB Metrics: De-emphasis = {de_db:.2f} dB    "
+                f"Preshoot 1 = {pre1_db:.2f} dB    "
+                f"Preshoot 2 = {pre2_db:.2f} dB    "
+                f"Boost = {boost_db:.2f} dB    "
+                f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n\n"
+                f"Eye Metrics: Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
+                f"Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
+                f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
+                f"Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
+                f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
+                f"Note: simplified visualization only. "
+                f"This is not a PCIe compliance calculator.{q10_note}"
+            )
+        else:
+            text = (
+                "Teaching Focus: PAM4 has 4 levels and 3 eyes; this tab uses simplified 4-tap FIR.\n"
+                f"Preset = {self.gen6_preset_current}    Low-pass Alpha = {self.pam4_alpha_current:.3f}\n"
+                f"C-2 = {self.pam4_cm2_current:.4f}    C-1 = {self.pam4_cm1_current:.4f}    "
+                f"C0 = {c0:.4f}    C+1 = {self.pam4_cp1_current:.4f}\n"
+                f"De-emphasis = {de_db:.2f} dB    Preshoot 1 = {pre1_db:.2f} dB    "
+                f"Preshoot 2 = {pre2_db:.2f} dB    Boost = {boost_db:.2f} dB\n"
+                f"Upper Eye = {self.pam4_eye_metrics['upper_eye']:.4f}    "
+                f"Middle Eye = {self.pam4_eye_metrics['middle_eye']:.4f}    "
+                f"Lower Eye = {self.pam4_eye_metrics['lower_eye']:.4f}    "
+                f"Minimum Eye = {self.pam4_eye_metrics['minimum_eye']:.4f}"
+            )
         self.pam4_info_text.setPlainText(text)
 
     def make_tx_symbols(self):
@@ -1332,31 +1362,44 @@ class PCIeTxEqSimulator(QMainWindow):
         c0, va, vb, vc, _, _ = calc_levels(self.cm1_current, self.cp1_current)
         tap_sum = abs(self.cm1_current) + abs(c0) + abs(self.cp1_current)
 
-        text = (
-            "Teaching Focus: Preshoot raises the last bit before a transition. "
-            "De-emphasis lowers repeated bits. "
-            "dB mode is for level-based visualization. "
-            "Tap mode is a FIR coefficient reference.\n\n"
-            f"EQ State: Preset = {self.current_preset}    "
-            f"Control Mode = {self.control_mode}    "
-            f"Preshoot = {self.pre_db_current:.2f} dB    "
-            f"De-emphasis = {self.de_db_current:.2f} dB    "
-            f"Low-pass Alpha = {self.channel_alpha_current:.3f} (smaller = more ISI)\n\n"
-            f"Tap / Level Reference: C-1 = {self.cm1_current:.4f}    "
-            f"C0 = {c0:.4f}    "
-            f"C+1 = {self.cp1_current:.4f}    "
-            f"Va = {va:.4f}    "
-            f"Vb = {vb:.4f}    "
-            f"Vc = {vc:.4f}    "
-            f"TapSum = {tap_sum:.4f}\n\n"
-            f"Eye Metrics: Eye Height = {self.eye_metrics['eye_height']:.4f}    "
-            f"Eye Max = {self.eye_metrics['eye_max']:.4f}    "
-            f"Eye Min = {self.eye_metrics['eye_min']:.4f}    "
-            f"Center UI Spread = {self.eye_metrics['center_spread']:.4f}\n\n"
-            f"Note: This is a teaching simulator, not a PCIe compliance tool. "
-            f"Preset values are approximate and for visualization only. "
-            f"Low-pass Alpha is a simplified ISI model, not a real PCIe channel model."
-        )
+        if self.nrz_show_detail:
+            text = (
+                "Teaching Focus: Preshoot raises the last bit before a transition. "
+                "De-emphasis lowers repeated bits. "
+                "dB mode is for level-based visualization. "
+                "Tap mode is a FIR coefficient reference.\n\n"
+                f"EQ State: Preset = {self.current_preset}    "
+                f"Control Mode = {self.control_mode}    "
+                f"Preshoot = {self.pre_db_current:.2f} dB    "
+                f"De-emphasis = {self.de_db_current:.2f} dB    "
+                f"Low-pass Alpha = {self.channel_alpha_current:.3f} (smaller = more ISI)\n\n"
+                f"Tap / Level Reference: C-1 = {self.cm1_current:.4f}    "
+                f"C0 = {c0:.4f}    "
+                f"C+1 = {self.cp1_current:.4f}    "
+                f"Va = {va:.4f}    "
+                f"Vb = {vb:.4f}    "
+                f"Vc = {vc:.4f}    "
+                f"TapSum = {tap_sum:.4f}\n\n"
+                f"Eye Metrics: Eye Height = {self.eye_metrics['eye_height']:.4f}    "
+                f"Eye Max = {self.eye_metrics['eye_max']:.4f}    "
+                f"Eye Min = {self.eye_metrics['eye_min']:.4f}    "
+                f"Center UI Spread = {self.eye_metrics['center_spread']:.4f}\n\n"
+                f"Note: This is a teaching simulator, not a PCIe compliance tool. "
+                f"Preset values are approximate and for visualization only. "
+                f"Low-pass Alpha is a simplified ISI model, not a real PCIe channel model."
+            )
+        else:
+            text = (
+                "Teaching Focus: Preshoot raises the bit before transition; De-emphasis lowers repeated bits.\n"
+                f"Preset = {self.current_preset}    Mode = {self.control_mode}    "
+                f"Low-pass Alpha = {self.channel_alpha_current:.3f}\n"
+                f"Preshoot = {self.pre_db_current:.2f} dB    De-emphasis = {self.de_db_current:.2f} dB    "
+                f"C-1 = {self.cm1_current:.4f}    C0 = {c0:.4f}    C+1 = {self.cp1_current:.4f}\n"
+                f"Va = {va:.4f}    Vb = {vb:.4f}    Vc = {vc:.4f}\n"
+                f"Eye Height = {self.eye_metrics['eye_height']:.4f}    "
+                f"Center UI Spread = {self.eye_metrics['center_spread']:.4f}    "
+                f"Teaching visualization only, not PCIe compliance."
+            )
 
         self.info_text.setPlainText(text)
 
