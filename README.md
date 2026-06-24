@@ -47,6 +47,43 @@ Install dependencies with:
 pip install -r requirements.txt
 ```
 
+## Build Windows EXE
+
+This project uses PyInstaller onedir mode for the Windows executable.
+Onedir is usually a better fit for PyQt GUI apps than onefile because it starts faster, is easier to inspect, and avoids onefile self-extraction overhead.
+
+For the smallest practical build, use a clean virtual environment so PyInstaller does not discover unrelated packages from a larger Python environment.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+build_exe.bat
+```
+
+The build script will:
+
+1. Upgrade pip.
+2. Install runtime dependencies from `requirements.txt`.
+3. Install PyInstaller as a build dependency.
+4. Remove old `build` / `dist` folders.
+5. Run `python -m PyInstaller PCIETXEQ5.spec`.
+
+Build output:
+
+```powershell
+dist\PCIe_TX_EQ_Simulator\PCIe_TX_EQ_Simulator.exe
+```
+
+Run the EXE and check:
+
+- Gen1~5 NRZ tab displays normally.
+- Gen6 PAM4 tab displays normally.
+- Presets can be selected.
+- Sliders update waveform and eye diagram.
+- No black console window appears.
+
+Onefile builds are not used here because they may be larger and can start more slowly for PyQt applications.
+
 ## Gen1~5 NRZ Teaching Notes
 
 The Gen1~5 tab visualizes classic NRZ TX EQ concepts:
@@ -70,8 +107,11 @@ The Gen6 tab visualizes simplified PAM4 TX EQ concepts:
 - C0 is calculated automatically from C-2, C-1, and C+1.
 - The Q0~Q10 selector is for visualization.
 - Q10 is special / Note 2 and is not explicitly modeled; selecting Q10 resets coefficients to Q0 for visualization safety.
-- PAM4 eye diagram is a simplified raw eye visualization.
-- The simulator does not model oscilloscope CDR, trigger recovery, or scope-style PAM4 eye alignment.
+- Raw Eye shows fixed 2 UI slicing.
+- Centered Eye estimates a common PAM4 sampling phase.
+- The common t_center is shared by Upper, Middle, and Lower eyes.
+- The simulator does not independently align the three PAM4 eyes.
+- It does not model full oscilloscope CDR, SER contour, TDECQ, or compliance-grade measurement.
 - Upper / Middle / Lower eye metrics are approximate visualization values.
 
 The Gen6 PAM4 control path is separate from the Gen1~5 NRZ control path.
@@ -85,6 +125,7 @@ Low-pass Alpha is a simplified ISI demonstration. It is not a real PCIe channel 
 - This is not a PCIe compliance tool.
 - Preset values are approximate and for visualization only.
 - Eye metrics are approximate visualization values.
-- PAM4 eye diagram is raw 2 UI visualization, not scope-style recovered eye alignment.
+- Raw Eye uses fixed 2 UI slicing, while Centered Eye uses a shared common t_center phase.
+- PAM4 eye visualization here is simplified and does not model full oscilloscope alignment or compliance-grade measurement.
 - The channel model is simplified.
 - Density eye mode is not implemented.

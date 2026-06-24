@@ -300,6 +300,9 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_cp1_current = 0.0
         self.pam4_alpha_current = 0.08
         self.pam4_show_detail = False
+        self.pam4_eye_mode = "raw"
+        self.pam4_t_center_phase = SPB // 2
+        self.pam4_t_center_score = 0.0
         self.pam4_symbols = pam4_symbols_from_random(PAM4_SYMBOL_COUNT)
         self.pam4_eye_metrics = {
             "upper_eye": 0.0,
@@ -491,6 +494,15 @@ class PCIeTxEqSimulator(QMainWindow):
         self.gen6_preset_combo.currentIndexChanged.connect(self.on_gen6_preset_change)
         control_layout.addWidget(preset_label)
         control_layout.addWidget(self.gen6_preset_combo)
+
+        eye_mode_label = QLabel("PAM4 Eye Mode")
+        eye_mode_label.setFixedWidth(120)
+        self.pam4_eye_mode_combo = QComboBox()
+        self.pam4_eye_mode_combo.addItem("Raw Eye")
+        self.pam4_eye_mode_combo.addItem("Centered Eye")
+        self.pam4_eye_mode_combo.currentIndexChanged.connect(self.on_pam4_eye_mode_change)
+        control_layout.addWidget(eye_mode_label)
+        control_layout.addWidget(self.pam4_eye_mode_combo)
 
         self.btn_pam4_new_wave = QPushButton("Generate New PAM4 Waveform")
         self.btn_pam4_new_wave.clicked.connect(self.on_pam4_generate_new_waveform)
@@ -920,6 +932,14 @@ class PCIeTxEqSimulator(QMainWindow):
                 self.gen6_preset_combo.setCurrentIndex(idx)
         finally:
             self.gen6_preset_combo.blockSignals(False)
+        self.pam4_eye_mode_combo.blockSignals(True)
+        try:
+            target_mode = "Centered Eye" if self.pam4_eye_mode == "centered" else "Raw Eye"
+            idx = self.pam4_eye_mode_combo.findText(target_mode)
+            if idx >= 0:
+                self.pam4_eye_mode_combo.setCurrentIndex(idx)
+        finally:
+            self.pam4_eye_mode_combo.blockSignals(False)
 
         if not update_edits:
             return
@@ -1048,6 +1068,14 @@ class PCIeTxEqSimulator(QMainWindow):
             self.pam4_sync_ui_from_state(update_edits=True)
             self.pam4_redraw_all()
 
+    def on_pam4_eye_mode_change(self, _index):
+        if self.syncing_ui:
+            return
+        self.pam4_eye_mode = (
+            "centered" if self.pam4_eye_mode_combo.currentText() == "Centered Eye" else "raw"
+        )
+        self.pam4_redraw_all()
+
     def on_toggle_pam4_detail(self):
         self.pam4_show_detail = not self.pam4_show_detail
         self.btn_pam4_detail.setText("Hide Detail" if self.pam4_show_detail else "Show Detail")
@@ -1075,8 +1103,8 @@ class PCIeTxEqSimulator(QMainWindow):
         ch_wave = simple_channel(tx_wave, alpha=self.pam4_alpha_current)
 
         self.update_pam4_waveform(tx_wave, ch_wave)
-        self.update_pam4_eye(ch_wave)
         self.update_pam4_eye_metrics(ch_wave)
+        self.update_pam4_eye(ch_wave)
         self.update_pam4_info()
 
     def update_pam4_waveform(self, tx_wave, ch_wave):
@@ -1089,6 +1117,12 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_wave_plot.setYRange(-1.4, 1.4)
 
     def update_pam4_eye(self, wave):
+        if self.pam4_eye_mode == "centered":
+            self.update_pam4_eye_centered(wave)
+        else:
+            self.update_pam4_eye_raw(wave)
+
+    def update_pam4_eye_raw(self, wave):
         seg_len = EYE_UI * SPB
         start = 20 * SPB
         trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
@@ -1118,18 +1152,21 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_eye_plot.setXRange(0, EYE_UI, padding=0)
         self.pam4_eye_plot.setYRange(-1.4, 1.4)
 
-    def update_pam4_eye_metrics(self, wave):
+    def update_pam4_eye_centered(self, wave):
         seg_len = EYE_UI * SPB
+        half_seg = seg_len // 2
         start = 20 * SPB
-        trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
+        phase = int(np.clip(self.pam4_t_center_phase, 0, SPB - 1))
+
+        center_positions = np.arange(start + phase, len(wave), SPB, dtype=int)
+        trace_starts = center_positions - half_seg
+        trace_starts = trace_starts[
+            (trace_starts >= 0) & (trace_starts + seg_len <= len(wave))
+        ]
         if trace_starts.size == 0:
-            self.pam4_eye_metrics = {
-                "upper_eye": 0.0,
-                "middle_eye": 0.0,
-                "lower_eye": 0.0,
-                "minimum_eye": 0.0,
-                "center_spread": 0.0,
-            }
+            self.pam4_eye_curve.setData([], [])
+            self.pam4_eye_plot.setXRange(0, EYE_UI, padding=0)
+            self.pam4_eye_plot.setYRange(-1.4, 1.4)
             return
 
         if trace_starts.size > MAX_EYE_TRACES:
@@ -1138,11 +1175,41 @@ class PCIeTxEqSimulator(QMainWindow):
         else:
             sampled_starts = trace_starts
 
-        segs = np.array([wave[s:s + seg_len] for s in sampled_starts], dtype=float)
-        center_idx = seg_len // 2
-        center_samples = segs[:, center_idx]
-        center_spread = float(np.max(center_samples) - np.min(center_samples))
+        x = np.arange(seg_len, dtype=float) / SPB
+        x_block = np.concatenate([x, [np.nan]])
+        x_all = np.tile(x_block, sampled_starts.size)
 
+        y_all = np.empty(sampled_starts.size * (seg_len + 1), dtype=float)
+        for idx, s in enumerate(sampled_starts):
+            base = idx * (seg_len + 1)
+            y_all[base:base + seg_len] = wave[s:s + seg_len]
+            y_all[base + seg_len] = np.nan
+
+        self.pam4_eye_curve.setData(x_all, y_all)
+        self.pam4_eye_plot.setXRange(0, EYE_UI, padding=0)
+        self.pam4_eye_plot.setYRange(-1.4, 1.4)
+
+    def calc_pam4_eye_openings_at_phase(self, wave, phase):
+        invalid = {
+            "valid": False,
+            "upper_eye": 0.0,
+            "middle_eye": 0.0,
+            "lower_eye": 0.0,
+            "minimum_eye": 0.0,
+            "center_spread": 0.0,
+            "sample_count": 0,
+        }
+
+        start = 20 * SPB
+        phase = int(np.clip(phase, 0, SPB - 1))
+        center_positions = np.arange(start + phase, len(wave), SPB, dtype=int)
+        center_positions = center_positions[
+            (center_positions >= 0) & (center_positions < len(wave))
+        ]
+        if center_positions.size < 20:
+            return invalid
+
+        center_samples = wave[center_positions]
         lower_band = center_samples[center_samples < -2 / 3]
         mid_low_band = center_samples[
             (center_samples >= -2 / 3) & (center_samples < 0)
@@ -1152,25 +1219,85 @@ class PCIeTxEqSimulator(QMainWindow):
         ]
         upper_band = center_samples[center_samples >= 2 / 3]
 
-        def eye_gap(left, right):
-            if left.size == 0 or right.size == 0:
-                return 0.0
-            return float(np.percentile(right, 5) - np.percentile(left, 95))
+        if min(
+            lower_band.size,
+            mid_low_band.size,
+            mid_high_band.size,
+            upper_band.size,
+        ) < 5:
+            return invalid
 
-        lower_eye = eye_gap(lower_band, mid_low_band)
-        middle_eye = eye_gap(mid_low_band, mid_high_band)
-        upper_eye = eye_gap(mid_high_band, upper_band)
-        positive_openings = [
-            value for value in (upper_eye, middle_eye, lower_eye) if value > 0
-        ]
-        minimum_eye = min(positive_openings) if positive_openings else 0.0
+        lower_eye = float(np.percentile(mid_low_band, 5) - np.percentile(lower_band, 95))
+        middle_eye = float(np.percentile(mid_high_band, 5) - np.percentile(mid_low_band, 95))
+        upper_eye = float(np.percentile(upper_band, 5) - np.percentile(mid_high_band, 95))
+        minimum_eye = min(upper_eye, middle_eye, lower_eye)
+        center_spread = float(np.max(center_samples) - np.min(center_samples))
 
-        self.pam4_eye_metrics = {
+        return {
+            "valid": True,
             "upper_eye": upper_eye,
             "middle_eye": middle_eye,
             "lower_eye": lower_eye,
             "minimum_eye": minimum_eye,
             "center_spread": center_spread,
+            "sample_count": int(center_samples.size),
+        }
+
+    def estimate_pam4_common_t_center_phase(self, wave):
+        fallback = self.calc_pam4_eye_openings_at_phase(wave, SPB // 2)
+        best_phase = SPB // 2
+        best_openings = fallback if fallback["valid"] else {
+            "valid": False,
+            "upper_eye": 0.0,
+            "middle_eye": 0.0,
+            "lower_eye": 0.0,
+            "minimum_eye": 0.0,
+            "center_spread": 0.0,
+            "sample_count": 0,
+        }
+        best_score = best_openings["minimum_eye"] if best_openings["valid"] else -np.inf
+
+        for phase in range(SPB):
+            openings = self.calc_pam4_eye_openings_at_phase(wave, phase)
+            if not openings["valid"]:
+                continue
+
+            score = openings["minimum_eye"]
+            if score > best_score + 1e-6:
+                best_phase = phase
+                best_openings = openings
+                best_score = score
+            elif abs(score - best_score) <= 1e-6:
+                if abs(phase - (SPB // 2)) < abs(best_phase - (SPB // 2)):
+                    best_phase = phase
+                    best_openings = openings
+                    best_score = score
+
+        if not best_openings["valid"]:
+            return SPB // 2, best_openings
+        return best_phase, best_openings
+
+    def update_pam4_eye_metrics(self, wave):
+        best_phase, best_openings = self.estimate_pam4_common_t_center_phase(wave)
+        self.pam4_t_center_phase = int(best_phase)
+        self.pam4_t_center_score = float(best_openings["minimum_eye"])
+
+        if not best_openings["valid"]:
+            self.pam4_eye_metrics = {
+                "upper_eye": 0.0,
+                "middle_eye": 0.0,
+                "lower_eye": 0.0,
+                "minimum_eye": 0.0,
+                "center_spread": 0.0,
+            }
+            return
+
+        self.pam4_eye_metrics = {
+            "upper_eye": best_openings["upper_eye"],
+            "middle_eye": best_openings["middle_eye"],
+            "lower_eye": best_openings["lower_eye"],
+            "minimum_eye": best_openings["minimum_eye"],
+            "center_spread": best_openings["center_spread"],
         }
 
     def update_pam4_info(self):
@@ -1203,6 +1330,16 @@ class PCIeTxEqSimulator(QMainWindow):
             vc2_ratio = vc2 / vd
         else:
             va_ratio = vb_ratio = vc1_ratio = vc2_ratio = 0.0
+        eye_mode_text = "Centered Eye" if self.pam4_eye_mode == "centered" else "Raw Eye"
+        if self.pam4_eye_mode == "centered":
+            eye_mode_note = (
+                "Centered Eye estimates a common PAM4 sampling phase that maximizes the minimum Upper/Middle/Lower eye opening, "
+                "then slices the 2 UI eye around that common t_center. It does not align eyes independently."
+            )
+        else:
+            eye_mode_note = (
+                "Raw Eye uses fixed 2 UI slicing without common t_center re-centering."
+            )
         q10_note = ""
         if self.gen6_preset_current == "Q10":
             q10_note = (
@@ -1232,7 +1369,10 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Preshoot 1 = {pre1_db:.2f} dB    "
                 f"Preshoot 2 = {pre2_db:.2f} dB    "
                 f"Boost = {boost_db:.2f} dB    "
-                f"Low-pass Alpha = {self.pam4_alpha_current:.3f}\n\n"
+                f"Low-pass Alpha = {self.pam4_alpha_current:.3f}    "
+                f"Eye Mode = {eye_mode_text}\n\n"
+                f"Common t_center Phase = {self.pam4_t_center_phase}/{SPB}    "
+                f"Common t_center Score = {self.pam4_t_center_score:.4f}\n\n"
                 f"Eye Metrics: Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
                 f"Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
                 f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
@@ -1240,15 +1380,16 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
                 f"Note: simplified visualization only. "
                 f"This is not a PCIe compliance calculator. "
-                f"PAM4 eye diagram is a simplified raw 2 UI eye visualization. "
-                f"It does not model oscilloscope CDR or scope-style eye alignment.{q10_note}"
+                f"{eye_mode_note}{q10_note}"
             )
         else:
             text = (
                 "Teaching Focus: PAM4 has 4 levels and 3 eyes; this tab uses simplified 4-tap FIR.\n"
-                f"Preset = {self.gen6_preset_current}    Low-pass Alpha = {self.pam4_alpha_current:.3f}\n"
+                f"Preset = {self.gen6_preset_current}    Low-pass Alpha = {self.pam4_alpha_current:.3f}    "
+                f"Eye Mode = {eye_mode_text}\n"
                 f"C-2 = {self.pam4_cm2_current:.4f}    C-1 = {self.pam4_cm1_current:.4f}    "
                 f"C0 = {c0:.4f}    C+1 = {self.pam4_cp1_current:.4f}\n"
+                f"t_center Phase = {self.pam4_t_center_phase}/{SPB}\n"
                 f"De-emphasis = {de_db:.2f} dB    Preshoot 1 = {pre1_db:.2f} dB    "
                 f"Preshoot 2 = {pre2_db:.2f} dB    Boost = {boost_db:.2f} dB\n"
                 f"Upper Eye = {self.pam4_eye_metrics['upper_eye']:.4f}    "
