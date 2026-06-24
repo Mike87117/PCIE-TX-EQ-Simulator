@@ -108,10 +108,11 @@ The Gen6 tab visualizes simplified PAM4 TX EQ concepts:
 - The Q0~Q10 selector is for visualization.
 - Q10 is special / Note 2 and is not explicitly modeled; selecting Q10 resets coefficients to Q0 for visualization safety.
 - Raw Eye shows fixed 2 UI slicing.
-- Centered Eye estimates a common PAM4 sampling phase.
+- Common t_center Eye estimates one shared PAM4 sampling phase.
 - The common t_center is shared by Upper, Middle, and Lower eyes.
 - The simulator does not independently align the three PAM4 eyes.
 - It does not model full oscilloscope CDR, SER contour, TDECQ, or compliance-grade measurement.
+- The goal is a simplified visual approximation, not a formal measurement.
 - Upper / Middle / Lower eye metrics are approximate visualization values.
 
 The Gen6 PAM4 control path is separate from the Gen1~5 NRZ control path.
@@ -125,7 +126,7 @@ Low-pass Alpha is a simplified ISI demonstration. It is not a real PCIe channel 
 - This is not a PCIe compliance tool.
 - Preset values are approximate and for visualization only.
 - Eye metrics are approximate visualization values.
-- Raw Eye uses fixed 2 UI slicing, while Centered Eye uses a shared common t_center phase.
+- Raw Eye uses fixed 2 UI slicing, while Common t_center Eye uses a shared common t_center phase.
 - PAM4 eye visualization here is simplified and does not model full oscilloscope alignment or compliance-grade measurement.
 - The channel model is simplified.
 - Density eye mode is not implemented.

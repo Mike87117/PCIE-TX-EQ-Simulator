@@ -499,7 +499,7 @@ class PCIeTxEqSimulator(QMainWindow):
         eye_mode_label.setFixedWidth(120)
         self.pam4_eye_mode_combo = QComboBox()
         self.pam4_eye_mode_combo.addItem("Raw Eye")
-        self.pam4_eye_mode_combo.addItem("Centered Eye")
+        self.pam4_eye_mode_combo.addItem("Common t_center Eye")
         self.pam4_eye_mode_combo.currentIndexChanged.connect(self.on_pam4_eye_mode_change)
         control_layout.addWidget(eye_mode_label)
         control_layout.addWidget(self.pam4_eye_mode_combo)
@@ -934,7 +934,7 @@ class PCIeTxEqSimulator(QMainWindow):
             self.gen6_preset_combo.blockSignals(False)
         self.pam4_eye_mode_combo.blockSignals(True)
         try:
-            target_mode = "Centered Eye" if self.pam4_eye_mode == "centered" else "Raw Eye"
+            target_mode = "Common t_center Eye" if self.pam4_eye_mode == "centered" else "Raw Eye"
             idx = self.pam4_eye_mode_combo.findText(target_mode)
             if idx >= 0:
                 self.pam4_eye_mode_combo.setCurrentIndex(idx)
@@ -1072,7 +1072,7 @@ class PCIeTxEqSimulator(QMainWindow):
         if self.syncing_ui:
             return
         self.pam4_eye_mode = (
-            "centered" if self.pam4_eye_mode_combo.currentText() == "Centered Eye" else "raw"
+            "centered" if self.pam4_eye_mode_combo.currentText() == "Common t_center Eye" else "raw"
         )
         self.pam4_redraw_all()
 
@@ -1244,6 +1244,7 @@ class PCIeTxEqSimulator(QMainWindow):
         }
 
     def estimate_pam4_common_t_center_phase(self, wave):
+        phase_update_margin = 0.002
         fallback = self.calc_pam4_eye_openings_at_phase(wave, SPB // 2)
         best_phase = SPB // 2
         best_openings = fallback if fallback["valid"] else {
@@ -1272,6 +1273,13 @@ class PCIeTxEqSimulator(QMainWindow):
                     best_phase = phase
                     best_openings = openings
                     best_score = score
+
+        old_phase = int(np.clip(self.pam4_t_center_phase, 0, SPB - 1))
+        old_openings = self.calc_pam4_eye_openings_at_phase(wave, old_phase)
+        if old_openings["valid"]:
+            old_score = old_openings["minimum_eye"]
+            if best_score <= old_score + phase_update_margin:
+                return old_phase, old_openings
 
         if not best_openings["valid"]:
             return SPB // 2, best_openings
@@ -1330,11 +1338,11 @@ class PCIeTxEqSimulator(QMainWindow):
             vc2_ratio = vc2 / vd
         else:
             va_ratio = vb_ratio = vc1_ratio = vc2_ratio = 0.0
-        eye_mode_text = "Centered Eye" if self.pam4_eye_mode == "centered" else "Raw Eye"
+        eye_mode_text = "Common t_center Eye" if self.pam4_eye_mode == "centered" else "Raw Eye"
         if self.pam4_eye_mode == "centered":
             eye_mode_note = (
-                "Centered Eye estimates a common PAM4 sampling phase that maximizes the minimum Upper/Middle/Lower eye opening, "
-                "then slices the 2 UI eye around that common t_center. It does not align eyes independently."
+                "Common t_center Eye estimates one shared PAM4 sampling phase that maximizes the minimum Upper/Middle/Lower eye opening, "
+                "then slices the 2 UI eye around that shared t_center. It does not align eyes independently."
             )
         else:
             eye_mode_note = (
@@ -1373,10 +1381,10 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Eye Mode = {eye_mode_text}\n\n"
                 f"Common t_center Phase = {self.pam4_t_center_phase}/{SPB}    "
                 f"Common t_center Score = {self.pam4_t_center_score:.4f}\n\n"
-                f"Eye Metrics: Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
-                f"Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
-                f"Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
-                f"Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
+                f"Eye Metrics: Common-phase Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
+                f"Common-phase Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
+                f"Common-phase Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
+                f"Common-phase Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
                 f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
                 f"Note: simplified visualization only. "
                 f"This is not a PCIe compliance calculator. "
@@ -1392,10 +1400,10 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"t_center Phase = {self.pam4_t_center_phase}/{SPB}\n"
                 f"De-emphasis = {de_db:.2f} dB    Preshoot 1 = {pre1_db:.2f} dB    "
                 f"Preshoot 2 = {pre2_db:.2f} dB    Boost = {boost_db:.2f} dB\n"
-                f"Upper Eye = {self.pam4_eye_metrics['upper_eye']:.4f}    "
-                f"Middle Eye = {self.pam4_eye_metrics['middle_eye']:.4f}    "
-                f"Lower Eye = {self.pam4_eye_metrics['lower_eye']:.4f}    "
-                f"Minimum Eye = {self.pam4_eye_metrics['minimum_eye']:.4f}"
+                f"Common-phase Upper Eye = {self.pam4_eye_metrics['upper_eye']:.4f}    "
+                f"Common-phase Middle Eye = {self.pam4_eye_metrics['middle_eye']:.4f}    "
+                f"Common-phase Lower Eye = {self.pam4_eye_metrics['lower_eye']:.4f}    "
+                f"Common-phase Minimum Eye = {self.pam4_eye_metrics['minimum_eye']:.4f}"
             )
         self.pam4_info_text.setPlainText(text)
 
