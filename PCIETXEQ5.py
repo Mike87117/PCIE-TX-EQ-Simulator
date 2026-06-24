@@ -1338,11 +1338,13 @@ class PCIeTxEqSimulator(QMainWindow):
             vc2_ratio = vc2 / vd
         else:
             va_ratio = vb_ratio = vc1_ratio = vc2_ratio = 0.0
+        t_center_ui = self.pam4_t_center_phase / SPB
         eye_mode_text = "Common t_center Eye" if self.pam4_eye_mode == "centered" else "Raw Eye"
         if self.pam4_eye_mode == "centered":
             eye_mode_note = (
                 "Common t_center Eye estimates one shared PAM4 sampling phase that maximizes the minimum Upper/Middle/Lower eye opening, "
-                "then slices the 2 UI eye around that shared t_center. It does not align eyes independently."
+                "then slices the 2 UI eye around that shared t_center. It does not independently align the three PAM4 eyes, "
+                "and it does not perform per-trace x_shift or per-eye shifting."
             )
         else:
             eye_mode_note = (
@@ -1379,7 +1381,7 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Boost = {boost_db:.2f} dB    "
                 f"Low-pass Alpha = {self.pam4_alpha_current:.3f}    "
                 f"Eye Mode = {eye_mode_text}\n\n"
-                f"Common t_center Phase = {self.pam4_t_center_phase}/{SPB}    "
+                f"Common t_center = {self.pam4_t_center_phase} / {SPB} samples = {t_center_ui:.3f} UI    "
                 f"Common t_center Score = {self.pam4_t_center_score:.4f}\n\n"
                 f"Eye Metrics: Common-phase Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
                 f"Common-phase Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
@@ -1397,7 +1399,8 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Eye Mode = {eye_mode_text}\n"
                 f"C-2 = {self.pam4_cm2_current:.4f}    C-1 = {self.pam4_cm1_current:.4f}    "
                 f"C0 = {c0:.4f}    C+1 = {self.pam4_cp1_current:.4f}\n"
-                f"t_center Phase = {self.pam4_t_center_phase}/{SPB}\n"
+                f"Common t_center = {self.pam4_t_center_phase} / {SPB} samples = {t_center_ui:.3f} UI    "
+                f"Score = {self.pam4_t_center_score:.4f}\n"
                 f"De-emphasis = {de_db:.2f} dB    Preshoot 1 = {pre1_db:.2f} dB    "
                 f"Preshoot 2 = {pre2_db:.2f} dB    Boost = {boost_db:.2f} dB\n"
                 f"Common-phase Upper Eye = {self.pam4_eye_metrics['upper_eye']:.4f}    "

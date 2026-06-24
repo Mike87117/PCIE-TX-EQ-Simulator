@@ -108,9 +108,14 @@ The Gen6 tab visualizes simplified PAM4 TX EQ concepts:
 - The Q0~Q10 selector is for visualization.
 - Q10 is special / Note 2 and is not explicitly modeled; selecting Q10 resets coefficients to Q0 for visualization safety.
 - Raw Eye shows fixed 2 UI slicing.
+- Raw Eye is useful for observing raw eye folding.
 - Common t_center Eye estimates one shared PAM4 sampling phase.
+- Common t_center Eye scans one UI of sampling phase.
+- Common t_center Eye selects one shared t_center phase that maximizes the minimum Upper / Middle / Lower eye opening.
+- Common t_center Eye re-slices the 2 UI eye around that shared t_center.
 - The common t_center is shared by Upper, Middle, and Lower eyes.
 - The simulator does not independently align the three PAM4 eyes.
+- The simulator does not perform per-trace x_shift or per-eye shifting.
 - It does not model full oscilloscope CDR, SER contour, TDECQ, or compliance-grade measurement.
 - The goal is a simplified visual approximation, not a formal measurement.
 - Upper / Middle / Lower eye metrics are approximate visualization values.
