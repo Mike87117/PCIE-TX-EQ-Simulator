@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QSlider, QLineEdit, QPushButton, QComboBox,
-    QPlainTextEdit, QTabWidget, QScrollArea, QSizePolicy
+    QPlainTextEdit, QTabWidget, QScrollArea, QSizePolicy, QGroupBox
 )
 from PyQt5.QtCore import Qt, QElapsedTimer
 from PyQt5.QtGui import QDoubleValidator
@@ -446,13 +446,16 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.info_text = QPlainTextEdit()
         self.info_text.setReadOnly(True)
-        self.info_text.setMinimumHeight(90)
-        self.info_text.setMaximumHeight(110)
+        self.info_text.setMinimumHeight(70)
+        self.info_text.setMaximumHeight(95)
         self.info_text.setStyleSheet("font-size: 17px;")
         layout.addWidget(self.info_text)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(210)
+        scroll.setMinimumHeight(160)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         
         bottom_widget = QWidget()
         bottom_layout = QVBoxLayout(bottom_widget)
@@ -478,6 +481,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.btn_reset_all.clicked.connect(self.on_reset_all)
         self.btn_nrz_detail = QPushButton("Show Detail")
         self.btn_nrz_detail.clicked.connect(self.on_toggle_nrz_detail)
+        self.btn_nrz_detail.setMaximumWidth(120)
         for btn in (
             self.btn_new_wave,
             self.btn_reset_no_eq,
@@ -486,12 +490,35 @@ class PCIeTxEqSimulator(QMainWindow):
             self.btn_nrz_detail,
         ):
             btn.setFixedHeight(24)
+            if btn is not self.btn_nrz_detail:
+                btn.setMaximumWidth(160)
             control_layout.addWidget(btn)
         bottom_layout.addLayout(control_layout)
 
         sliders_layout = QHBoxLayout()
-        tx_layout = QVBoxLayout()
-        rx_layout = QVBoxLayout()
+        
+        tx_group = QGroupBox("TX EQ / Channel")
+        rx_group = QGroupBox("RX EQ")
+        
+        group_box_style = """
+        QGroupBox {
+            font-weight: bold;
+            border: 1px solid #b0b0b0;
+            border-radius: 4px;
+            margin-top: 8px;
+            padding-top: 8px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 8px;
+            padding: 0 4px;
+        }
+        """
+        tx_group.setStyleSheet(group_box_style)
+        rx_group.setStyleSheet(group_box_style)
+        
+        tx_layout = QVBoxLayout(tx_group)
+        rx_layout = QVBoxLayout(rx_group)
 
         self.slider_cm1 = self.make_slider(
             "C-1", 0, 300, int(self.cm1_current * 1000)
@@ -587,8 +614,8 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_dfe2["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("dfe2"))
         self.slider_dfe3["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("dfe3"))
 
-        sliders_layout.addLayout(tx_layout)
-        sliders_layout.addLayout(rx_layout)
+        sliders_layout.addWidget(tx_group)
+        sliders_layout.addWidget(rx_group)
         bottom_layout.addLayout(sliders_layout)
         
         scroll.setWidget(bottom_widget)
