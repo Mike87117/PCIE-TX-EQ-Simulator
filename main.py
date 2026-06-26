@@ -20,7 +20,7 @@ PLOT_BITS = 64
 EYE_UI = 2
 MAX_EYE_TRACES = 200
 REALTIME_EYE_TRACES = 60
-REALTIME_EYE_INTERVAL_MS = 80
+REALTIME_EYE_INTERVAL_MS = 50
 PAM4_SYMBOL_COUNT = 512
 # Density eye rendering is not implemented; line eye rendering is always used.
 
