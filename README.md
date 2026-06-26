@@ -46,34 +46,6 @@ Install dependencies with:
 ```powershell
 pip install -r requirements.txt
 ```
-
-## Build Windows EXE
-
-This project uses PyInstaller onedir mode for the Windows executable.
-Onedir is usually a better fit for PyQt GUI apps than onefile because it starts faster, is easier to inspect, and avoids onefile self-extraction overhead.
-
-For the smallest practical build, use a clean virtual environment so PyInstaller does not discover unrelated packages from a larger Python environment.
-
-```powershell
-python -m venv .venv
-.venv\Scripts\activate
-build_exe.bat
-```
-
-The build script will:
-
-1. Upgrade pip.
-2. Install runtime dependencies from `requirements.txt`.
-3. Install PyInstaller as a build dependency.
-4. Remove old `build` / `dist` folders.
-5. Run `python -m PyInstaller PCIETXEQ5.spec`.
-
-Build output:
-
-```powershell
-dist\PCIe_TX_EQ_Simulator\PCIe_TX_EQ_Simulator.exe
-```
-
 Run the EXE and check:
 
 - Gen1~5 NRZ tab displays normally.
