@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QSlider, QLineEdit, QPushButton, QComboBox,
     QPlainTextEdit, QTabWidget
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QElapsedTimer
 from PyQt5.QtGui import QDoubleValidator
 import pyqtgraph as pg
 
@@ -19,6 +19,8 @@ SPB = 32
 PLOT_BITS = 64
 EYE_UI = 2
 MAX_EYE_TRACES = 200
+REALTIME_EYE_TRACES = 60
+REALTIME_EYE_INTERVAL_MS = 80
 PAM4_SYMBOL_COUNT = 512
 # Density eye rendering is not implemented; line eye rendering is always used.
 
@@ -375,6 +377,9 @@ class PCIeTxEqSimulator(QMainWindow):
         }
         self.bits = bits.copy()
         self.symbols = symbols.copy()
+
+        self.realtime_eye_timer = QElapsedTimer()
+        self.realtime_eye_timer.start()
 
         self.gen6_preset_current = "Q0"
         self.pam4_cm2_current = 0.0
@@ -1128,6 +1133,12 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.update_waveform(tx_wave, ch_wave, rx_wave)
 
+    def should_update_realtime_eye(self):
+        if self.realtime_eye_timer.hasExpired(REALTIME_EYE_INTERVAL_MS):
+            self.realtime_eye_timer.restart()
+            return True
+        return False
+
     def update_nrz_realtime(self):
         tx_sym = self.make_tx_symbols()
         tx_wave = np.repeat(tx_sym, SPB)
@@ -1136,8 +1147,12 @@ class PCIeTxEqSimulator(QMainWindow):
         rx_wave = self.get_target_rx_wave(rx_results)
 
         self.update_waveform(tx_wave, ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
-        # Skip update_eye and update_eye_metrics during drag to avoid UI stuttering
-        self.update_info()
+        
+        if self.should_update_realtime_eye():
+            self.update_eye_title()
+            self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
+            self.update_eye_metrics(rx_wave, rx_results)
+            self.update_info()
 
     def redraw_all(self):
         tx_sym = self.make_tx_symbols()
@@ -1148,7 +1163,7 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.update_waveform(tx_wave, ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
         self.update_eye_title()
-        self.update_eye(rx_wave)
+        self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
         self.update_eye_metrics(rx_wave, rx_results)
         self.update_info()
 
@@ -1690,11 +1705,11 @@ class PCIeTxEqSimulator(QMainWindow):
         ymax *= 1.1
         self.wave_plot.setYRange(-ymax, ymax)
 
-    def update_eye(self, wave):
+    def update_eye(self, wave, max_traces=MAX_EYE_TRACES):
         # Density eye is not implemented; always render the line eye diagram.
-        self.update_eye_line(wave)
+        self.update_eye_line(wave, max_traces)
 
-    def update_eye_line(self, wave):
+    def update_eye_line(self, wave, max_traces=MAX_EYE_TRACES):
         self.eye_img.hide()
         self.eye_curve.show()
 
@@ -1707,8 +1722,8 @@ class PCIeTxEqSimulator(QMainWindow):
             self.eye_plot.setYRange(-1.3, 1.3)
             return
 
-        if trace_starts.size > MAX_EYE_TRACES:
-            idx = np.linspace(0, trace_starts.size - 1, MAX_EYE_TRACES, dtype=int)
+        if trace_starts.size > max_traces:
+            idx = np.linspace(0, trace_starts.size - 1, max_traces, dtype=int)
             sampled_starts = trace_starts[idx]
         else:
             sampled_starts = trace_starts
