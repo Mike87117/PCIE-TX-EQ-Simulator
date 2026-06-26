@@ -4,9 +4,9 @@ from contextlib import contextmanager
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QSlider, QLineEdit, QPushButton, QComboBox,
-    QPlainTextEdit, QTabWidget
+    QPlainTextEdit, QTabWidget, QScrollArea, QSizePolicy, QGroupBox
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QElapsedTimer
 from PyQt5.QtGui import QDoubleValidator
 import pyqtgraph as pg
 
@@ -19,6 +19,8 @@ SPB = 32
 PLOT_BITS = 64
 EYE_UI = 2
 MAX_EYE_TRACES = 200
+REALTIME_EYE_TRACES = 60
+REALTIME_EYE_INTERVAL_MS = 50
 PAM4_SYMBOL_COUNT = 512
 # Density eye rendering is not implemented; line eye rendering is always used.
 
@@ -263,6 +265,83 @@ def gen6_pam4_fir(symbols_in, cm2, cm1, cp1):
 
 
 # =========================
+# RX EQ math (NRZ only for Phase 1)
+# =========================
+
+def apply_ctle(wave, gain, alpha=0.08):
+    """
+    Simplified visual CTLE model.
+    lowpass = simple_channel(wave)
+    high_freq = wave - lowpass
+    ctle = wave + gain * high_freq
+    """
+    if gain <= 0.0:
+        return wave
+    lowpass = simple_channel(wave, alpha=alpha)
+    high_freq = wave - lowpass
+    ctle = wave + gain * high_freq
+    return ctle
+
+
+def apply_dfe(ctle_wave, taps, spb, sampling_phase):
+    """
+    Symbol-rate Decision Feedback Equalizer.
+    """
+    num_symbols = len(ctle_wave) // spb
+    samples = np.zeros(num_symbols)
+    for i in range(num_symbols):
+        idx = i * spb + sampling_phase
+        if idx < len(ctle_wave):
+            samples[i] = ctle_wave[idx]
+        else:
+            samples[i] = ctle_wave[-1]
+
+    decisions = np.zeros(num_symbols)
+    corrected_samples = np.zeros(num_symbols)
+    
+    for i in range(num_symbols):
+        feedback = 0.0
+        for j, tap in enumerate(taps):
+            prev_idx = i - 1 - j
+            if prev_idx >= 0:
+                feedback += tap * decisions[prev_idx]
+                
+        val = samples[i] - feedback
+        corrected_samples[i] = val
+        decisions[i] = 1.0 if val >= 0 else -1.0
+        
+    # Reconstruct DFE wave (ZOH) for decision-domain visualization
+    reconstructed_wave = np.repeat(corrected_samples, spb)
+    
+    # Trim or pad to match the original oversampled waveform length exactly
+    if len(reconstructed_wave) > len(ctle_wave):
+        reconstructed_wave = reconstructed_wave[:len(ctle_wave)]
+    elif len(reconstructed_wave) < len(ctle_wave):
+        reconstructed_wave = np.pad(
+            reconstructed_wave, 
+            (0, len(ctle_wave) - len(reconstructed_wave)), 
+            mode="edge"
+        )
+        
+    return corrected_samples, decisions, reconstructed_wave
+
+
+def run_rx_pipeline(ch_wave, ctle_gain, ctle_alpha, dfe_taps, spb, sampling_phase):
+    ctle_wave = apply_ctle(ch_wave, ctle_gain, alpha=ctle_alpha)
+    corrected_samples, decisions, reconstructed_dfe_wave = apply_dfe(
+        ctle_wave, dfe_taps, spb, sampling_phase
+    )
+    
+    return {
+        "ch_wave": ch_wave,
+        "ctle_wave": ctle_wave,
+        "dfe_corrected_samples": corrected_samples,
+        "dfe_decisions": decisions,
+        "dfe_reconstructed_wave": reconstructed_dfe_wave
+    }
+
+
+# =========================
 # Main GUI
 # =========================
 
@@ -285,6 +364,11 @@ class PCIeTxEqSimulator(QMainWindow):
             pre_db=self.pre_db_current,
             de_db=self.de_db_current
         )
+        self.rx_view_mode = "Channel (Before RX EQ)"
+        self.ctle_boost_current = 0.0
+        self.dfe_tap1_current = 0.0
+        self.dfe_tap2_current = 0.0
+        self.dfe_tap3_current = 0.0
         self.eye_metrics = {
             "eye_height": 0.0,
             "eye_max": 0.0,
@@ -293,6 +377,9 @@ class PCIeTxEqSimulator(QMainWindow):
         }
         self.bits = bits.copy()
         self.symbols = symbols.copy()
+
+        self.realtime_eye_timer = QElapsedTimer()
+        self.realtime_eye_timer.start()
 
         self.gen6_preset_current = "Q0"
         self.pam4_cm2_current = 0.0
@@ -342,24 +429,36 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.tx_curve = self.wave_plot.plot(pen=pg.mkPen(width=2))
         self.ch_curve = self.wave_plot.plot(pen=pg.mkPen(width=2, style=Qt.DashLine))
+        self.rx_curve = self.wave_plot.plot(pen=pg.mkPen(color='g', width=2))
         self.eye_curve = self.eye_plot.plot(pen=pg.mkPen(width=1))
         self.eye_img = pg.ImageItem()
         self.eye_img.hide()
         self.eye_plot.addItem(self.eye_img)
         self.tx_curve.setDownsampling(auto=True)
         self.ch_curve.setDownsampling(auto=True)
+        self.rx_curve.setDownsampling(auto=True)
         self.tx_curve.setClipToView(True)
         self.ch_curve.setClipToView(True)
+        self.rx_curve.setClipToView(True)
 
         layout.addWidget(self.wave_plot, stretch=4)
         layout.addWidget(self.eye_plot, stretch=3)
 
         self.info_text = QPlainTextEdit()
         self.info_text.setReadOnly(True)
-        self.info_text.setMinimumHeight(120)
-        self.info_text.setMaximumHeight(150)
+        self.info_text.setMinimumHeight(70)
+        self.info_text.setMaximumHeight(95)
         self.info_text.setStyleSheet("font-size: 17px;")
         layout.addWidget(self.info_text)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMaximumHeight(210)
+        scroll.setMinimumHeight(160)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        
+        bottom_widget = QWidget()
+        bottom_layout = QVBoxLayout(bottom_widget)
 
         control_layout = QHBoxLayout()
         preset_label = QLabel("PCIe Preset")
@@ -374,27 +473,52 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.btn_new_wave = QPushButton("Generate New Waveform")
         self.btn_new_wave.clicked.connect(self.on_generate_new_waveform)
-        self.btn_reset_eq = QPushButton("Reset EQ")
-        self.btn_reset_eq.clicked.connect(self.on_reset_eq)
         self.btn_reset_no_eq = QPushButton("Reset to No EQ")
         self.btn_reset_no_eq.clicked.connect(self.on_reset_no_eq)
         self.btn_reset_channel = QPushButton("Reset Channel")
         self.btn_reset_channel.clicked.connect(self.on_reset_channel)
-        self.btn_reset_all = QPushButton("Reset EQ + Channel")
+        self.btn_reset_all = QPushButton("Reset All")
         self.btn_reset_all.clicked.connect(self.on_reset_all)
         self.btn_nrz_detail = QPushButton("Show Detail")
         self.btn_nrz_detail.clicked.connect(self.on_toggle_nrz_detail)
+        self.btn_nrz_detail.setMaximumWidth(120)
         for btn in (
             self.btn_new_wave,
-            self.btn_reset_eq,
             self.btn_reset_no_eq,
             self.btn_reset_channel,
             self.btn_reset_all,
             self.btn_nrz_detail,
         ):
             btn.setFixedHeight(24)
+            if btn is not self.btn_nrz_detail:
+                btn.setMaximumWidth(160)
             control_layout.addWidget(btn)
-        layout.addLayout(control_layout)
+        bottom_layout.addLayout(control_layout)
+
+        sliders_layout = QHBoxLayout()
+        
+        tx_group = QGroupBox("TX EQ / Channel")
+        rx_group = QGroupBox("RX EQ")
+        
+        group_box_style = """
+        QGroupBox {
+            font-weight: bold;
+            border: 1px solid #b0b0b0;
+            border-radius: 4px;
+            margin-top: 8px;
+            padding-top: 8px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 8px;
+            padding: 0 4px;
+        }
+        """
+        tx_group.setStyleSheet(group_box_style)
+        rx_group.setStyleSheet(group_box_style)
+        
+        tx_layout = QVBoxLayout(tx_group)
+        rx_layout = QVBoxLayout(rx_group)
 
         self.slider_cm1 = self.make_slider(
             "C-1", 0, 300, int(self.cm1_current * 1000)
@@ -402,11 +526,9 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_cp1 = self.make_slider(
             "C+1", -300, 0, int(self.cp1_current * 1000)
         )
-
         self.slider_pre = self.make_slider(
             "Preshoot dB", 0, 600, int(self.pre_db_current * 100)
         )
-
         self.slider_de = self.make_slider(
             "De-emphasis dB", -1200, 0, int(self.de_db_current * 100)
         )
@@ -419,15 +541,15 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_pre["edit"].setValidator(QDoubleValidator(0.0, 6.0, 2, self))
         self.slider_de["edit"].setValidator(QDoubleValidator(-12.0, 0.0, 2, self))
 
-        layout.addLayout(self.slider_cm1["layout"])
-        layout.addLayout(self.slider_cp1["layout"])
-        layout.addLayout(self.slider_pre["layout"])
-        layout.addLayout(self.slider_de["layout"])
-        layout.addLayout(self.slider_alpha["layout"])
+        tx_layout.addLayout(self.slider_cm1["layout"])
+        tx_layout.addLayout(self.slider_cp1["layout"])
+        tx_layout.addLayout(self.slider_pre["layout"])
+        tx_layout.addLayout(self.slider_de["layout"])
+        tx_layout.addLayout(self.slider_alpha["layout"])
+        tx_layout.addStretch()
 
         self.slider_cm1["slider"].valueChanged.connect(self.on_tap_slider_change)
         self.slider_cp1["slider"].valueChanged.connect(self.on_tap_slider_change)
-
         self.slider_pre["slider"].valueChanged.connect(self.on_db_slider_change)
         self.slider_de["slider"].valueChanged.connect(self.on_db_slider_change)
         self.slider_alpha["slider"].valueChanged.connect(self.on_alpha_slider_change)
@@ -446,6 +568,58 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_pre["edit"].editingFinished.connect(lambda: self.on_edit_change("pre"))
         self.slider_de["edit"].editingFinished.connect(lambda: self.on_edit_change("de"))
         self.slider_alpha["edit"].editingFinished.connect(lambda: self.on_edit_change("alpha"))
+
+        # RX EQ Section
+        rx_control_layout = QHBoxLayout()
+        rx_view_label = QLabel("RX Eye/Wave View")
+        rx_view_label.setFixedWidth(120)
+        self.rx_view_combo = QComboBox()
+        self.rx_view_combo.addItems(["Channel (Before RX EQ)", "CTLE", "DFE (Decision-domain Eye)"])
+        self.rx_view_combo.currentIndexChanged.connect(self.on_rx_view_change)
+        rx_control_layout.addWidget(rx_view_label)
+        rx_control_layout.addWidget(self.rx_view_combo)
+        
+        self.btn_reset_rx = QPushButton("Reset RX EQ")
+        self.btn_reset_rx.setFixedHeight(24)
+        self.btn_reset_rx.clicked.connect(self.on_reset_rx)
+        rx_control_layout.addWidget(self.btn_reset_rx)
+        rx_layout.addLayout(rx_control_layout)
+
+        self.slider_ctle = self.make_slider("CTLE Boost", 0, 1000, int(self.ctle_boost_current * 1000))
+        self.slider_dfe1 = self.make_slider("DFE Tap 1", -500, 500, int(self.dfe_tap1_current * 1000))
+        self.slider_dfe2 = self.make_slider("DFE Tap 2", -500, 500, int(self.dfe_tap2_current * 1000))
+        self.slider_dfe3 = self.make_slider("DFE Tap 3", -500, 500, int(self.dfe_tap3_current * 1000))
+        
+        self.slider_ctle["edit"].setValidator(QDoubleValidator(0.0, 1.0, 3, self))
+        self.slider_dfe1["edit"].setValidator(QDoubleValidator(-0.5, 0.5, 3, self))
+        self.slider_dfe2["edit"].setValidator(QDoubleValidator(-0.5, 0.5, 3, self))
+        self.slider_dfe3["edit"].setValidator(QDoubleValidator(-0.5, 0.5, 3, self))
+        
+        rx_layout.addLayout(self.slider_ctle["layout"])
+        rx_layout.addLayout(self.slider_dfe1["layout"])
+        rx_layout.addLayout(self.slider_dfe2["layout"])
+        rx_layout.addLayout(self.slider_dfe3["layout"])
+        rx_layout.addStretch()
+        
+        self.slider_ctle["slider"].valueChanged.connect(self.on_rx_slider_change)
+        self.slider_dfe1["slider"].valueChanged.connect(self.on_rx_slider_change)
+        self.slider_dfe2["slider"].valueChanged.connect(self.on_rx_slider_change)
+        self.slider_dfe3["slider"].valueChanged.connect(self.on_rx_slider_change)
+        
+        for s in (self.slider_ctle["slider"], self.slider_dfe1["slider"], self.slider_dfe2["slider"], self.slider_dfe3["slider"]):
+            s.sliderReleased.connect(self.on_slider_released)
+            
+        self.slider_ctle["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("ctle"))
+        self.slider_dfe1["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("dfe1"))
+        self.slider_dfe2["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("dfe2"))
+        self.slider_dfe3["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("dfe3"))
+
+        sliders_layout.addWidget(tx_group)
+        sliders_layout.addWidget(rx_group)
+        bottom_layout.addLayout(sliders_layout)
+        
+        scroll.setWidget(bottom_widget)
+        layout.addWidget(scroll, stretch=0)
 
         self.init_pam4_tab()
         self.setCentralWidget(root)
@@ -622,6 +796,17 @@ class PCIeTxEqSimulator(QMainWindow):
         self.set_slider_value_silent(self.slider_alpha["slider"], int(self.channel_alpha_current * 1000))
         self.set_preset_combo_silent(self.current_preset)
 
+        # RX UI Sync
+        self.set_slider_value_silent(self.slider_ctle["slider"], int(self.ctle_boost_current * 1000))
+        self.set_slider_value_silent(self.slider_dfe1["slider"], int(self.dfe_tap1_current * 1000))
+        self.set_slider_value_silent(self.slider_dfe2["slider"], int(self.dfe_tap2_current * 1000))
+        self.set_slider_value_silent(self.slider_dfe3["slider"], int(self.dfe_tap3_current * 1000))
+        self.rx_view_combo.blockSignals(True)
+        idx = self.rx_view_combo.findText(self.rx_view_mode)
+        if idx >= 0:
+            self.rx_view_combo.setCurrentIndex(idx)
+        self.rx_view_combo.blockSignals(False)
+
         if not update_edits:
             return
 
@@ -631,6 +816,10 @@ class PCIeTxEqSimulator(QMainWindow):
             (self.slider_pre["edit"], f"{self.pre_db_current:.2f}"),
             (self.slider_de["edit"], f"{self.de_db_current:.2f}"),
             (self.slider_alpha["edit"], f"{self.channel_alpha_current:.3f}"),
+            (self.slider_ctle["edit"], f"{self.ctle_boost_current:.3f}"),
+            (self.slider_dfe1["edit"], f"{self.dfe_tap1_current:.3f}"),
+            (self.slider_dfe2["edit"], f"{self.dfe_tap2_current:.3f}"),
+            (self.slider_dfe3["edit"], f"{self.dfe_tap3_current:.3f}"),
         ]
         for edit, text in edit_rows:
             if not edit.hasFocus():
@@ -789,7 +978,11 @@ class PCIeTxEqSimulator(QMainWindow):
     def is_any_slider_down(self):
         return any(
             s["slider"].isSliderDown()
-            for s in (self.slider_cm1, self.slider_cp1, self.slider_pre, self.slider_de, self.slider_alpha)
+            for s in (
+                self.slider_cm1, self.slider_cp1, self.slider_pre, 
+                self.slider_de, self.slider_alpha,
+                self.slider_ctle, self.slider_dfe1, self.slider_dfe2, self.slider_dfe3
+            )
         )
 
     def on_slider_released(self):
@@ -798,6 +991,66 @@ class PCIeTxEqSimulator(QMainWindow):
         with self.ui_sync() as active:
             if not active:
                 return
+            self.sync_ui_from_state(update_edits=True)
+            self.redraw_all()
+
+    def on_rx_slider_change(self):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.ctle_boost_current = self.slider_ctle["slider"].value() / 1000
+            self.dfe_tap1_current = self.slider_dfe1["slider"].value() / 1000
+            self.dfe_tap2_current = self.slider_dfe2["slider"].value() / 1000
+            self.dfe_tap3_current = self.slider_dfe3["slider"].value() / 1000
+            self.sync_ui_from_state(update_edits=True)
+            if self.is_any_slider_down():
+                self.update_nrz_realtime()
+            else:
+                self.redraw_all()
+
+    def on_rx_edit_change(self, target):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            try:
+                if target == "ctle":
+                    val = float(self.slider_ctle["edit"].text())
+                    self.ctle_boost_current = float(np.clip(val, 0.0, 1.0))
+                elif target == "dfe1":
+                    val = float(self.slider_dfe1["edit"].text())
+                    self.dfe_tap1_current = float(np.clip(val, -0.5, 0.5))
+                elif target == "dfe2":
+                    val = float(self.slider_dfe2["edit"].text())
+                    self.dfe_tap2_current = float(np.clip(val, -0.5, 0.5))
+                elif target == "dfe3":
+                    val = float(self.slider_dfe3["edit"].text())
+                    self.dfe_tap3_current = float(np.clip(val, -0.5, 0.5))
+            except ValueError:
+                self.sync_ui_from_state(update_edits=True)
+                return
+            self.sync_ui_from_state(update_edits=True)
+            self.redraw_all()
+
+    def on_rx_view_change(self):
+        if self.syncing_ui:
+            return
+        self.rx_view_mode = self.rx_view_combo.currentText()
+        self.redraw_all()
+
+    def on_reset_rx(self):
+        if self.syncing_ui:
+            return
+        with self.ui_sync() as active:
+            if not active:
+                return
+            self.ctle_boost_current = 0.0
+            self.dfe_tap1_current = 0.0
+            self.dfe_tap2_current = 0.0
+            self.dfe_tap3_current = 0.0
             self.sync_ui_from_state(update_edits=True)
             self.redraw_all()
 
@@ -859,14 +1112,22 @@ class PCIeTxEqSimulator(QMainWindow):
         with self.ui_sync() as active:
             if not active:
                 return
-            self.pre_db_current = 1.5
-            self.de_db_current = -3.5
+            self.pre_db_current = 0.0
+            self.de_db_current = 0.0
             self.cm1_current, self.cp1_current = db_to_taps(
                 self.pre_db_current, self.de_db_current
             )
-            self.current_preset = "Custom"
+            self.current_preset = "Preset 4"
             self.control_mode = "db"
             self.channel_alpha_current = 0.08
+            
+            # Reset RX EQ too
+            self.ctle_boost_current = 0.0
+            self.dfe_tap1_current = 0.0
+            self.dfe_tap2_current = 0.0
+            self.dfe_tap3_current = 0.0
+            self.rx_view_mode = "Channel (Before RX EQ)"
+
             self.sync_ui_from_state(update_edits=True)
             self.redraw_all()
 
@@ -875,31 +1136,75 @@ class PCIeTxEqSimulator(QMainWindow):
         self.btn_nrz_detail.setText("Hide Detail" if self.nrz_show_detail else "Show Detail")
         self.update_info()
 
+    def get_rx_pipeline_results(self, tx_wave, ch_wave):
+        # Use a fixed CTLE alpha decoupled from channel loss model
+        fixed_ctle_alpha = 0.08
+        return run_rx_pipeline(
+            ch_wave, 
+            self.ctle_boost_current, 
+            fixed_ctle_alpha, 
+            [self.dfe_tap1_current, self.dfe_tap2_current, self.dfe_tap3_current], 
+            SPB, 
+            SPB // 2
+        )
+
+    def get_target_rx_wave(self, rx_results):
+        if "CTLE" in self.rx_view_mode:
+            return rx_results["ctle_wave"]
+        elif "DFE" in self.rx_view_mode:
+            return rx_results["dfe_reconstructed_wave"]
+        else:
+            return rx_results["ch_wave"]
+
+    def update_eye_title(self):
+        if "CTLE" in self.rx_view_mode:
+            self.eye_plot.setTitle("Eye Diagram after CTLE")
+        elif "DFE" in self.rx_view_mode:
+            self.eye_plot.setTitle("DFE Decision-domain Eye")
+        else:
+            self.eye_plot.setTitle("Eye Diagram after Channel")
+
     def update_waveform_only(self):
         tx_sym = self.make_tx_symbols()
         tx_wave = np.repeat(tx_sym, SPB)
         ch_wave = simple_channel(tx_wave, alpha=self.channel_alpha_current)
+        rx_results = self.get_rx_pipeline_results(tx_wave, ch_wave)
+        rx_wave = self.get_target_rx_wave(rx_results) if "Channel" not in self.rx_view_mode else None
 
-        self.update_waveform(tx_wave, ch_wave)
+        self.update_waveform(tx_wave, ch_wave, rx_wave)
+
+    def should_update_realtime_eye(self):
+        if self.realtime_eye_timer.hasExpired(REALTIME_EYE_INTERVAL_MS):
+            self.realtime_eye_timer.restart()
+            return True
+        return False
 
     def update_nrz_realtime(self):
         tx_sym = self.make_tx_symbols()
         tx_wave = np.repeat(tx_sym, SPB)
         ch_wave = simple_channel(tx_wave, alpha=self.channel_alpha_current)
+        rx_results = self.get_rx_pipeline_results(tx_wave, ch_wave)
+        rx_wave = self.get_target_rx_wave(rx_results)
 
-        self.update_waveform(tx_wave, ch_wave)
-        self.update_eye(ch_wave)
-        self.update_eye_metrics(ch_wave)
-        self.update_info()
+        self.update_waveform(tx_wave, ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
+        
+        if self.should_update_realtime_eye():
+            self.update_eye_title()
+            self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
+            self.update_eye_metrics(rx_wave, rx_results, max_traces=REALTIME_EYE_TRACES)
+            self.update_info()
 
     def redraw_all(self):
         tx_sym = self.make_tx_symbols()
         tx_wave = np.repeat(tx_sym, SPB)
         ch_wave = simple_channel(tx_wave, alpha=self.channel_alpha_current)
+        rx_results = self.get_rx_pipeline_results(tx_wave, ch_wave)
+        rx_wave = self.get_target_rx_wave(rx_results)
 
-        self.update_waveform(tx_wave, ch_wave)
-        self.update_eye(ch_wave)
-        self.update_eye_metrics(ch_wave)
+        self.update_waveform(tx_wave, ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
+        self.update_eye_title()
+        self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
+        self.update_eye_metrics(rx_wave, rx_results, max_traces=MAX_EYE_TRACES)
         self.update_info()
 
     def full_refresh(self):
@@ -1416,12 +1721,17 @@ class PCIeTxEqSimulator(QMainWindow):
             return tx_sym
         return tx_eq_pattern(self.symbols, self.pre_db_current, self.de_db_current)
 
-    def update_waveform(self, tx_wave, ch_wave):
+    def update_waveform(self, tx_wave, ch_wave, rx_wave=None):
         length = PLOT_BITS * SPB
         t = np.arange(length) / SPB
 
         self.tx_curve.setData(t, tx_wave[:length])
         self.ch_curve.setData(t, ch_wave[:length])
+        
+        if rx_wave is not None:
+            self.rx_curve.setData(t, rx_wave[:length])
+        else:
+            self.rx_curve.setData([], [])
 
         self.wave_plot.setXRange(0, PLOT_BITS)
         ymax = max(
@@ -1429,14 +1739,17 @@ class PCIeTxEqSimulator(QMainWindow):
             float(np.max(np.abs(tx_wave[:length]))),
             float(np.max(np.abs(ch_wave[:length]))),
         )
+        if rx_wave is not None:
+            ymax = max(ymax, float(np.max(np.abs(rx_wave[:length]))))
+            
         ymax *= 1.1
         self.wave_plot.setYRange(-ymax, ymax)
 
-    def update_eye(self, wave):
+    def update_eye(self, wave, max_traces=MAX_EYE_TRACES):
         # Density eye is not implemented; always render the line eye diagram.
-        self.update_eye_line(wave)
+        self.update_eye_line(wave, max_traces)
 
-    def update_eye_line(self, wave):
+    def update_eye_line(self, wave, max_traces=MAX_EYE_TRACES):
         self.eye_img.hide()
         self.eye_curve.show()
 
@@ -1449,8 +1762,8 @@ class PCIeTxEqSimulator(QMainWindow):
             self.eye_plot.setYRange(-1.3, 1.3)
             return
 
-        if trace_starts.size > MAX_EYE_TRACES:
-            idx = np.linspace(0, trace_starts.size - 1, MAX_EYE_TRACES, dtype=int)
+        if trace_starts.size > max_traces:
+            idx = np.linspace(0, trace_starts.size - 1, max_traces, dtype=int)
             sampled_starts = trace_starts[idx]
         else:
             sampled_starts = trace_starts
@@ -1481,21 +1794,69 @@ class PCIeTxEqSimulator(QMainWindow):
         """
         raise NotImplementedError("Density eye rendering is not implemented.")
 
-    def update_eye_metrics(self, wave):
+    def update_eye_metrics(self, wave, rx_results=None, max_traces=MAX_EYE_TRACES):
+        if rx_results is not None and "DFE" in self.rx_view_mode:
+            # For DFE, calculate metrics based on corrected symbol-rate samples vs ground truth
+            samples = rx_results["dfe_corrected_samples"]
+            decisions = rx_results["dfe_decisions"]
+            
+            ref_len = min(len(samples), len(self.symbols))
+            reference = self.symbols[:ref_len]
+            samples_aligned = samples[:ref_len]
+            decisions_aligned = decisions[:ref_len]
+            
+            warmup_symbols = 20
+            if ref_len > warmup_symbols:
+                reference = reference[warmup_symbols:]
+                samples_aligned = samples_aligned[warmup_symbols:]
+                decisions_aligned = decisions_aligned[warmup_symbols:]
+            else:
+                reference = np.array([])
+                samples_aligned = np.array([])
+                decisions_aligned = np.array([])
+            
+            if len(samples_aligned) > 0:
+                signed_margin = samples_aligned * reference
+                error_count = int(np.sum(decisions_aligned != reference))
+                margin_5pct = float(np.percentile(signed_margin, 5))
+                eye_height = margin_5pct * 2.0
+                eye_max = float(np.max(samples_aligned))
+                eye_min = float(np.min(samples_aligned))
+                center_spread = float(np.max(samples_aligned) - np.min(samples_aligned))
+            else:
+                margin_5pct = 0.0
+                eye_height = 0.0
+                error_count = 0
+                eye_max = 0.0
+                eye_min = 0.0
+                center_spread = 0.0
+                
+            self.eye_metrics = {
+                "eye_height": eye_height,
+                "margin_5pct": margin_5pct,
+                "error_count": error_count,
+                "eye_max": eye_max,
+                "eye_min": eye_min,
+                "center_spread": center_spread,
+            }
+            return
+
         seg_len = EYE_UI * SPB
         start = 20 * SPB
         trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
         if trace_starts.size == 0:
             self.eye_metrics = {
                 "eye_height": 0.0,
+                "margin_5pct": 0.0,
+                "error_count": 0,
                 "eye_max": 0.0,
                 "eye_min": 0.0,
                 "center_spread": 0.0,
             }
             return
 
-        if trace_starts.size > MAX_EYE_TRACES:
-            idx = np.linspace(0, trace_starts.size - 1, MAX_EYE_TRACES, dtype=int)
+        if trace_starts.size > max_traces:
+            idx = np.linspace(0, trace_starts.size - 1, max_traces, dtype=int)
             sampled_starts = trace_starts[idx]
         else:
             sampled_starts = trace_starts
@@ -1517,6 +1878,8 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.eye_metrics = {
             "eye_height": eye_height,
+            "margin_5pct": eye_height / 2.0,
+            "error_count": 0,
             "eye_max": eye_max,
             "eye_min": eye_min,
             "center_spread": center_spread,
@@ -1525,6 +1888,12 @@ class PCIeTxEqSimulator(QMainWindow):
     def update_info(self):
         c0, va, vb, vc, _, _ = calc_levels(self.cm1_current, self.cp1_current)
         tap_sum = abs(self.cm1_current) + abs(c0) + abs(self.cp1_current)
+
+        if "DFE" in self.rx_view_mode:
+            dfe_metric_str = (f"DFE Margin (5%) = {self.eye_metrics.get('margin_5pct', 0.0):.4f}    "
+                              f"DFE Errors = {self.eye_metrics.get('error_count', 0)}")
+        else:
+            dfe_metric_str = f"Eye Height = {self.eye_metrics.get('eye_height', 0.0):.4f}"
 
         if self.nrz_show_detail:
             text = (
@@ -1537,6 +1906,9 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Preshoot = {self.pre_db_current:.2f} dB    "
                 f"De-emphasis = {self.de_db_current:.2f} dB    "
                 f"Low-pass Alpha = {self.channel_alpha_current:.3f} (smaller = more ISI)\n\n"
+                f"RX EQ: CTLE Boost = {self.ctle_boost_current:.3f}    "
+                f"DFE Taps = [{self.dfe_tap1_current:.3f}, {self.dfe_tap2_current:.3f}, {self.dfe_tap3_current:.3f}]    "
+                f"View = {self.rx_view_mode}\n\n"
                 f"Tap / Level Reference: C-1 = {self.cm1_current:.4f}    "
                 f"C0 = {c0:.4f}    "
                 f"C+1 = {self.cp1_current:.4f}    "
@@ -1544,10 +1916,10 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Vb = {vb:.4f}    "
                 f"Vc = {vc:.4f}    "
                 f"TapSum = {tap_sum:.4f}\n\n"
-                f"Eye Metrics: Eye Height = {self.eye_metrics['eye_height']:.4f}    "
-                f"Eye Max = {self.eye_metrics['eye_max']:.4f}    "
-                f"Eye Min = {self.eye_metrics['eye_min']:.4f}    "
-                f"Center UI Spread = {self.eye_metrics['center_spread']:.4f}\n\n"
+                f"Eye Metrics: {dfe_metric_str}    "
+                f"Eye Max = {self.eye_metrics.get('eye_max', 0):.4f}    "
+                f"Eye Min = {self.eye_metrics.get('eye_min', 0):.4f}    "
+                f"Center Spread = {self.eye_metrics.get('center_spread', 0):.4f}\n\n"
                 f"Note: This is a teaching simulator, not a PCIe compliance tool. "
                 f"Preset values are approximate and for visualization only. "
                 f"Low-pass Alpha is a simplified ISI model, not a real PCIe channel model."
@@ -1559,9 +1931,8 @@ class PCIeTxEqSimulator(QMainWindow):
                 f"Low-pass Alpha = {self.channel_alpha_current:.3f}\n"
                 f"Preshoot = {self.pre_db_current:.2f} dB    De-emphasis = {self.de_db_current:.2f} dB    "
                 f"C-1 = {self.cm1_current:.4f}    C0 = {c0:.4f}    C+1 = {self.cp1_current:.4f}\n"
-                f"Va = {va:.4f}    Vb = {vb:.4f}    Vc = {vc:.4f}\n"
-                f"Eye Height = {self.eye_metrics['eye_height']:.4f}    "
-                f"Center UI Spread = {self.eye_metrics['center_spread']:.4f}    "
+                f"RX EQ: CTLE = {self.ctle_boost_current:.3f}   DFE = [{self.dfe_tap1_current:.3f}, {self.dfe_tap2_current:.3f}, {self.dfe_tap3_current:.3f}]\n"
+                f"{dfe_metric_str}    Center Spread = {self.eye_metrics.get('center_spread', 0):.4f}    \n"
                 f"Teaching visualization only, not PCIe compliance."
             )
 
