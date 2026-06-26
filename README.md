@@ -12,7 +12,7 @@ This project is for learning concepts, not for compliance testing, preset coeffi
 ## Run
 
 ```powershell
-python PCIETXEQ5.py
+python main.py
 ```
 
 ## How to Use
