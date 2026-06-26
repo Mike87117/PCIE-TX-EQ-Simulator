@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QSlider, QLineEdit, QPushButton, QComboBox,
-    QPlainTextEdit, QTabWidget
+    QPlainTextEdit, QTabWidget, QScrollArea, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QElapsedTimer
 from PyQt5.QtGui import QDoubleValidator
@@ -446,10 +446,16 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.info_text = QPlainTextEdit()
         self.info_text.setReadOnly(True)
-        self.info_text.setMinimumHeight(120)
-        self.info_text.setMaximumHeight(150)
+        self.info_text.setMinimumHeight(90)
+        self.info_text.setMaximumHeight(110)
         self.info_text.setStyleSheet("font-size: 17px;")
         layout.addWidget(self.info_text)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        
+        bottom_widget = QWidget()
+        bottom_layout = QVBoxLayout(bottom_widget)
 
         control_layout = QHBoxLayout()
         preset_label = QLabel("PCIe Preset")
@@ -464,8 +470,6 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.btn_new_wave = QPushButton("Generate New Waveform")
         self.btn_new_wave.clicked.connect(self.on_generate_new_waveform)
-        self.btn_reset_eq = QPushButton("Reset EQ")
-        self.btn_reset_eq.clicked.connect(self.on_reset_eq)
         self.btn_reset_no_eq = QPushButton("Reset to No EQ")
         self.btn_reset_no_eq.clicked.connect(self.on_reset_no_eq)
         self.btn_reset_channel = QPushButton("Reset Channel")
@@ -476,7 +480,6 @@ class PCIeTxEqSimulator(QMainWindow):
         self.btn_nrz_detail.clicked.connect(self.on_toggle_nrz_detail)
         for btn in (
             self.btn_new_wave,
-            self.btn_reset_eq,
             self.btn_reset_no_eq,
             self.btn_reset_channel,
             self.btn_reset_all,
@@ -484,7 +487,11 @@ class PCIeTxEqSimulator(QMainWindow):
         ):
             btn.setFixedHeight(24)
             control_layout.addWidget(btn)
-        layout.addLayout(control_layout)
+        bottom_layout.addLayout(control_layout)
+
+        sliders_layout = QHBoxLayout()
+        tx_layout = QVBoxLayout()
+        rx_layout = QVBoxLayout()
 
         self.slider_cm1 = self.make_slider(
             "C-1", 0, 300, int(self.cm1_current * 1000)
@@ -492,11 +499,9 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_cp1 = self.make_slider(
             "C+1", -300, 0, int(self.cp1_current * 1000)
         )
-
         self.slider_pre = self.make_slider(
             "Preshoot dB", 0, 600, int(self.pre_db_current * 100)
         )
-
         self.slider_de = self.make_slider(
             "De-emphasis dB", -1200, 0, int(self.de_db_current * 100)
         )
@@ -509,15 +514,15 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_pre["edit"].setValidator(QDoubleValidator(0.0, 6.0, 2, self))
         self.slider_de["edit"].setValidator(QDoubleValidator(-12.0, 0.0, 2, self))
 
-        layout.addLayout(self.slider_cm1["layout"])
-        layout.addLayout(self.slider_cp1["layout"])
-        layout.addLayout(self.slider_pre["layout"])
-        layout.addLayout(self.slider_de["layout"])
-        layout.addLayout(self.slider_alpha["layout"])
+        tx_layout.addLayout(self.slider_cm1["layout"])
+        tx_layout.addLayout(self.slider_cp1["layout"])
+        tx_layout.addLayout(self.slider_pre["layout"])
+        tx_layout.addLayout(self.slider_de["layout"])
+        tx_layout.addLayout(self.slider_alpha["layout"])
+        tx_layout.addStretch()
 
         self.slider_cm1["slider"].valueChanged.connect(self.on_tap_slider_change)
         self.slider_cp1["slider"].valueChanged.connect(self.on_tap_slider_change)
-
         self.slider_pre["slider"].valueChanged.connect(self.on_db_slider_change)
         self.slider_de["slider"].valueChanged.connect(self.on_db_slider_change)
         self.slider_alpha["slider"].valueChanged.connect(self.on_alpha_slider_change)
@@ -551,7 +556,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.btn_reset_rx.setFixedHeight(24)
         self.btn_reset_rx.clicked.connect(self.on_reset_rx)
         rx_control_layout.addWidget(self.btn_reset_rx)
-        layout.addLayout(rx_control_layout)
+        rx_layout.addLayout(rx_control_layout)
 
         self.slider_ctle = self.make_slider("CTLE Boost", 0, 1000, int(self.ctle_boost_current * 1000))
         self.slider_dfe1 = self.make_slider("DFE Tap 1", -500, 500, int(self.dfe_tap1_current * 1000))
@@ -563,10 +568,11 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_dfe2["edit"].setValidator(QDoubleValidator(-0.5, 0.5, 3, self))
         self.slider_dfe3["edit"].setValidator(QDoubleValidator(-0.5, 0.5, 3, self))
         
-        layout.addLayout(self.slider_ctle["layout"])
-        layout.addLayout(self.slider_dfe1["layout"])
-        layout.addLayout(self.slider_dfe2["layout"])
-        layout.addLayout(self.slider_dfe3["layout"])
+        rx_layout.addLayout(self.slider_ctle["layout"])
+        rx_layout.addLayout(self.slider_dfe1["layout"])
+        rx_layout.addLayout(self.slider_dfe2["layout"])
+        rx_layout.addLayout(self.slider_dfe3["layout"])
+        rx_layout.addStretch()
         
         self.slider_ctle["slider"].valueChanged.connect(self.on_rx_slider_change)
         self.slider_dfe1["slider"].valueChanged.connect(self.on_rx_slider_change)
@@ -580,6 +586,13 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_dfe1["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("dfe1"))
         self.slider_dfe2["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("dfe2"))
         self.slider_dfe3["edit"].editingFinished.connect(lambda: self.on_rx_edit_change("dfe3"))
+
+        sliders_layout.addLayout(tx_layout)
+        sliders_layout.addLayout(rx_layout)
+        bottom_layout.addLayout(sliders_layout)
+        
+        scroll.setWidget(bottom_widget)
+        layout.addWidget(scroll, stretch=0)
 
         self.init_pam4_tab()
         self.setCentralWidget(root)
