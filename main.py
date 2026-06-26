@@ -1112,12 +1112,12 @@ class PCIeTxEqSimulator(QMainWindow):
         with self.ui_sync() as active:
             if not active:
                 return
-            self.pre_db_current = 1.5
-            self.de_db_current = -3.5
+            self.pre_db_current = 0.0
+            self.de_db_current = 0.0
             self.cm1_current, self.cp1_current = db_to_taps(
                 self.pre_db_current, self.de_db_current
             )
-            self.current_preset = "Custom"
+            self.current_preset = "Preset 4"
             self.control_mode = "db"
             self.channel_alpha_current = 0.08
             
