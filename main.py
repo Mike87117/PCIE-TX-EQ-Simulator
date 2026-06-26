@@ -470,7 +470,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.btn_reset_no_eq.clicked.connect(self.on_reset_no_eq)
         self.btn_reset_channel = QPushButton("Reset Channel")
         self.btn_reset_channel.clicked.connect(self.on_reset_channel)
-        self.btn_reset_all = QPushButton("Reset TX EQ + Channel")
+        self.btn_reset_all = QPushButton("Reset All")
         self.btn_reset_all.clicked.connect(self.on_reset_all)
         self.btn_nrz_detail = QPushButton("Show Detail")
         self.btn_nrz_detail.clicked.connect(self.on_toggle_nrz_detail)
@@ -1151,7 +1151,7 @@ class PCIeTxEqSimulator(QMainWindow):
         if self.should_update_realtime_eye():
             self.update_eye_title()
             self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
-            self.update_eye_metrics(rx_wave, rx_results)
+            self.update_eye_metrics(rx_wave, rx_results, max_traces=REALTIME_EYE_TRACES)
             self.update_info()
 
     def redraw_all(self):
@@ -1164,7 +1164,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.update_waveform(tx_wave, ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
         self.update_eye_title()
         self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
-        self.update_eye_metrics(rx_wave, rx_results)
+        self.update_eye_metrics(rx_wave, rx_results, max_traces=MAX_EYE_TRACES)
         self.update_info()
 
     def full_refresh(self):
@@ -1754,7 +1754,7 @@ class PCIeTxEqSimulator(QMainWindow):
         """
         raise NotImplementedError("Density eye rendering is not implemented.")
 
-    def update_eye_metrics(self, wave, rx_results=None):
+    def update_eye_metrics(self, wave, rx_results=None, max_traces=MAX_EYE_TRACES):
         if rx_results is not None and "DFE" in self.rx_view_mode:
             # For DFE, calculate metrics based on corrected symbol-rate samples vs ground truth
             samples = rx_results["dfe_corrected_samples"]
@@ -1765,23 +1765,39 @@ class PCIeTxEqSimulator(QMainWindow):
             samples_aligned = samples[:ref_len]
             decisions_aligned = decisions[:ref_len]
             
-            signed_margin = samples_aligned * reference
-            error_count = int(np.sum(decisions_aligned != reference))
+            warmup_symbols = 20
+            if ref_len > warmup_symbols:
+                reference = reference[warmup_symbols:]
+                samples_aligned = samples_aligned[warmup_symbols:]
+                decisions_aligned = decisions_aligned[warmup_symbols:]
+            else:
+                reference = np.array([])
+                samples_aligned = np.array([])
+                decisions_aligned = np.array([])
             
-            if len(signed_margin) > 0:
+            if len(samples_aligned) > 0:
+                signed_margin = samples_aligned * reference
+                error_count = int(np.sum(decisions_aligned != reference))
                 margin_5pct = float(np.percentile(signed_margin, 5))
+                eye_height = margin_5pct * 2.0
+                eye_max = float(np.max(samples_aligned))
+                eye_min = float(np.min(samples_aligned))
+                center_spread = float(np.max(samples_aligned) - np.min(samples_aligned))
             else:
                 margin_5pct = 0.0
-                
-            eye_height = margin_5pct * 2.0
+                eye_height = 0.0
+                error_count = 0
+                eye_max = 0.0
+                eye_min = 0.0
+                center_spread = 0.0
                 
             self.eye_metrics = {
                 "eye_height": eye_height,
                 "margin_5pct": margin_5pct,
                 "error_count": error_count,
-                "eye_max": float(np.max(samples)) if samples.size > 0 else 0.0,
-                "eye_min": float(np.min(samples)) if samples.size > 0 else 0.0,
-                "center_spread": float(np.max(samples) - np.min(samples)) if samples.size > 0 else 0.0,
+                "eye_max": eye_max,
+                "eye_min": eye_min,
+                "center_spread": center_spread,
             }
             return
 
@@ -1799,8 +1815,8 @@ class PCIeTxEqSimulator(QMainWindow):
             }
             return
 
-        if trace_starts.size > MAX_EYE_TRACES:
-            idx = np.linspace(0, trace_starts.size - 1, MAX_EYE_TRACES, dtype=int)
+        if trace_starts.size > max_traces:
+            idx = np.linspace(0, trace_starts.size - 1, max_traces, dtype=int)
             sampled_starts = trace_starts[idx]
         else:
             sampled_starts = trace_starts
