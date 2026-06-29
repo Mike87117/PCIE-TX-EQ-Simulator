@@ -447,8 +447,8 @@ class PCIeTxEqSimulator(QMainWindow):
         layout.addWidget(self.eye_plot, stretch=3)
 
         self.status_panel = QFrame()
-        self.status_panel.setMinimumHeight(75)
-        self.status_panel.setMaximumHeight(95)
+        self.status_panel.setMinimumHeight(90)
+        self.status_panel.setMaximumHeight(110)
         self.status_panel.setStyleSheet("""
             QFrame {
                 border: 1px solid #c0c0c0;
@@ -463,15 +463,15 @@ class PCIeTxEqSimulator(QMainWindow):
         self.status_items = {}
         
         for r in range(2):
-            for c in range(5):
+            for c in range(4):
                 container = QWidget()
                 hlay = QHBoxLayout(container)
                 hlay.setContentsMargins(0, 0, 0, 0)
                 hlay.setSpacing(4)
                 lbl = QLabel()
-                lbl.setStyleSheet("font-size: 11px; color: #555; border: none; background: transparent;")
+                lbl.setStyleSheet("font-size: 13px; color: #555; border: none; background: transparent;")
                 val = QLabel()
-                val.setStyleSheet("font-size: 13px; font-weight: bold; color: #222; border: none; background: transparent;")
+                val.setStyleSheet("font-size: 16px; font-weight: bold; color: #111; border: none; background: transparent;")
                 hlay.addWidget(lbl)
                 hlay.addWidget(val)
                 hlay.addStretch()
@@ -1960,26 +1960,22 @@ class PCIeTxEqSimulator(QMainWindow):
         set_item(0, 1, "Mode:", self.control_mode)
         
         if "DFE" in self.rx_view_mode:
-            set_item(0, 2, "CH:", f"{self.channel_alpha_current:.3f}")
-            set_item(0, 3, "RX:", "DFE Margin")
-            set_item(0, 4, "CTLE:", f"{self.ctle_boost_current:.3f}")
+            set_item(0, 2, "RX:", "DFE Margin")
+            set_item(0, 3, "CTLE:", f"{self.ctle_boost_current:.3f}")
             
-            set_item(1, 0, "DFE:", f"[{self.dfe_tap1_current:.3f}, {self.dfe_tap2_current:.3f}, {self.dfe_tap3_current:.3f}]")
+            set_item(1, 0, "DFE:", f"{self.dfe_tap1_current:.3f} / {self.dfe_tap2_current:.3f} / {self.dfe_tap3_current:.3f}")
             set_item(1, 1, "Margin:", f"{self.eye_metrics.get('margin_5pct', 0.0):.4f}")
             set_item(1, 2, "Errors:", str(self.eye_metrics.get('error_count', 0)))
-            set_item(1, 3, "Sample Max:", f"{self.eye_metrics.get('eye_max', 0.0):.4f}")
-            set_item(1, 4, "Spread:", f"{self.eye_metrics.get('center_spread', 0.0):.4f}")
+            set_item(1, 3, "Spread:", f"{self.eye_metrics.get('center_spread', 0.0):.4f}")
         else:
-            set_item(0, 2, "Pre:", f"{self.pre_db_current:.2f} dB")
-            set_item(0, 3, "De:", f"{self.de_db_current:.2f} dB")
-            set_item(0, 4, "CH Alpha:", f"{self.channel_alpha_current:.3f}")
+            set_item(0, 2, "Pre/De:", f"{self.pre_db_current:.2f} / {self.de_db_current:.2f} dB")
+            set_item(0, 3, "CH:", f"{self.channel_alpha_current:.3f}")
             
             view_short = "Channel" if "Channel" in self.rx_view_mode else "CTLE"
             set_item(1, 0, "RX:", view_short)
             set_item(1, 1, "CTLE:", f"{self.ctle_boost_current:.3f}")
-            set_item(1, 2, "DFE:", f"[{self.dfe_tap1_current:.3f}, {self.dfe_tap2_current:.3f}, {self.dfe_tap3_current:.3f}]")
-            set_item(1, 3, "Eye H:", f"{self.eye_metrics.get('eye_height', 0.0):.4f}")
-            set_item(1, 4, "Spread:", f"{self.eye_metrics.get('center_spread', 0.0):.4f}")
+            set_item(1, 2, "Eye H:", f"{self.eye_metrics.get('eye_height', 0.0):.4f}")
+            set_item(1, 3, "Spread:", f"{self.eye_metrics.get('center_spread', 0.0):.4f}")
 
 
 if __name__ == "__main__":
