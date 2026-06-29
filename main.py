@@ -4,7 +4,8 @@ from contextlib import contextmanager
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QSlider, QLineEdit, QPushButton, QComboBox,
-    QPlainTextEdit, QTabWidget, QScrollArea, QSizePolicy, QGroupBox
+    QPlainTextEdit, QTabWidget, QScrollArea, QSizePolicy, QGroupBox, QGridLayout,
+    QMessageBox, QFrame
 )
 from PyQt5.QtCore import Qt, QElapsedTimer
 from PyQt5.QtGui import QDoubleValidator
@@ -357,7 +358,6 @@ class PCIeTxEqSimulator(QMainWindow):
         self.control_mode = "db"
         self.current_preset = "Custom"
         self.channel_alpha_current = 0.08
-        self.nrz_show_detail = False
 
         self.pre_db_current = 1.5
         self.de_db_current = -3.5
@@ -422,11 +422,15 @@ class PCIeTxEqSimulator(QMainWindow):
         self.wave_plot.setLabel("bottom", "Bit / UI")
         self.wave_plot.setLabel("left", "Voltage")
         self.wave_plot.showGrid(x=True, y=True)
+        
+        self.wave_plot.hideButtons()
 
         self.eye_plot = pg.PlotWidget(title="Eye Diagram after Channel")
         self.eye_plot.setLabel("bottom", "UI")
         self.eye_plot.setLabel("left", "Voltage")
         self.eye_plot.showGrid(x=True, y=True)
+        
+        self.eye_plot.hideButtons()
 
         self.tx_curve = self.wave_plot.plot(pen=pg.mkPen(width=2))
         self.ch_curve = self.wave_plot.plot(pen=pg.mkPen(width=2, style=Qt.DashLine))
@@ -442,12 +446,39 @@ class PCIeTxEqSimulator(QMainWindow):
         layout.addWidget(self.wave_plot, stretch=4)
         layout.addWidget(self.eye_plot, stretch=3)
 
-        self.info_text = QPlainTextEdit()
-        self.info_text.setReadOnly(True)
-        self.info_text.setMinimumHeight(70)
-        self.info_text.setMaximumHeight(95)
-        self.info_text.setStyleSheet("font-size: 17px;")
-        layout.addWidget(self.info_text)
+        self.status_panel = QFrame()
+        self.status_panel.setMinimumHeight(75)
+        self.status_panel.setMaximumHeight(95)
+        self.status_panel.setStyleSheet("""
+            QFrame {
+                border: 1px solid #c0c0c0;
+                border-radius: 4px;
+                background-color: #f9f9f9;
+            }
+        """)
+        
+        self.status_layout = QGridLayout(self.status_panel)
+        self.status_layout.setContentsMargins(8, 4, 8, 4)
+        self.status_layout.setSpacing(4)
+        self.status_items = {}
+        
+        for r in range(2):
+            for c in range(5):
+                container = QWidget()
+                hlay = QHBoxLayout(container)
+                hlay.setContentsMargins(0, 0, 0, 0)
+                hlay.setSpacing(4)
+                lbl = QLabel()
+                lbl.setStyleSheet("font-size: 11px; color: #555; border: none; background: transparent;")
+                val = QLabel()
+                val.setStyleSheet("font-size: 13px; font-weight: bold; color: #222; border: none; background: transparent;")
+                hlay.addWidget(lbl)
+                hlay.addWidget(val)
+                hlay.addStretch()
+                self.status_layout.addWidget(container, r, c)
+                self.status_items[(r, c)] = (lbl, val)
+                
+        layout.addWidget(self.status_panel)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -471,13 +502,13 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.btn_new_wave = QPushButton("Generate New Waveform")
         self.btn_new_wave.clicked.connect(self.on_generate_new_waveform)
-        self.btn_reset_no_eq = QPushButton("Reset to No EQ")
+        self.btn_reset_no_eq = QPushButton("Reset to TX EQ")
         self.btn_reset_no_eq.clicked.connect(self.on_reset_no_eq)
         self.btn_reset_channel = QPushButton("Reset Channel")
         self.btn_reset_channel.clicked.connect(self.on_reset_channel)
         self.btn_reset_all = QPushButton("Reset All")
         self.btn_reset_all.clicked.connect(self.on_reset_all)
-        self.btn_nrz_detail = QPushButton("Show Detail")
+        self.btn_nrz_detail = QPushButton("Detail")
         self.btn_nrz_detail.clicked.connect(self.on_toggle_nrz_detail)
         self.btn_nrz_detail.setMaximumWidth(120)
         for btn in (
@@ -1114,9 +1145,24 @@ class PCIeTxEqSimulator(QMainWindow):
             self.redraw_all()
 
     def on_toggle_nrz_detail(self):
-        self.nrz_show_detail = not self.nrz_show_detail
-        self.btn_nrz_detail.setText("Hide Detail" if self.nrz_show_detail else "Show Detail")
-        self.update_info()
+        msg = QMessageBox(self)
+        msg.setWindowTitle("NRZ TX/RX EQ Details")
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("Teaching Simulator Detailed Information")
+        msg.setInformativeText(
+            "Teaching Focus:\n"
+            "- Preshoot raises the last bit before a transition.\n"
+            "- De-emphasis lowers repeated bits.\n"
+            "- dB mode is for level-based visualization.\n"
+            "- Tap mode is a FIR coefficient reference.\n\n"
+            "Channel & RX EQ:\n"
+            "- Low-pass Alpha is a simplified ISI model, not a real PCIe channel.\n"
+            "- CTLE provides high-frequency boost.\n"
+            "- DFE operates at symbol rate. It uses previous slicer decisions to subtract post-cursor ISI.\n"
+            "- DFE sign convention: corrected[n] = sample[n] - tap * decision[n-1].\n\n"
+            "Note: This is a teaching simulator, not a PCIe compliance tool."
+        )
+        msg.exec_()
 
     def get_rx_pipeline_results(self, tx_wave, ch_wave):
         # Use a fixed CTLE alpha decoupled from channel loss model
@@ -1899,66 +1945,41 @@ class PCIeTxEqSimulator(QMainWindow):
         }
 
     def update_info(self):
-        c0, va, vb, vc, _, _ = calc_levels(self.cm1_current, self.cp1_current)
-        tap_sum = abs(self.cm1_current) + abs(c0) + abs(self.cp1_current)
+        def set_item(r, c, label_text, value_text):
+            lbl, val = self.status_items[(r, c)]
+            if label_text:
+                lbl.setText(label_text)
+                lbl.show()
+                val.setText(value_text)
+                val.show()
+            else:
+                lbl.hide()
+                val.hide()
 
+        set_item(0, 0, "Preset:", self.current_preset)
+        set_item(0, 1, "Mode:", self.control_mode)
+        
         if "DFE" in self.rx_view_mode:
-            metric_max_label = "Sample Max"
-            metric_min_label = "Sample Min"
-            metric_spread_label = "Sample Spread"
-            dfe_metric_str = (f"DFE Margin (5%) = {self.eye_metrics.get('margin_5pct', 0.0):.4f}    "
-                              f"DFE Errors = {self.eye_metrics.get('error_count', 0)}")
-            dfe_sign_note = "DFE sign: corrected[n] = sample[n] - tap[k] * previous_decision."
+            set_item(0, 2, "CH:", f"{self.channel_alpha_current:.3f}")
+            set_item(0, 3, "RX:", "DFE Margin")
+            set_item(0, 4, "CTLE:", f"{self.ctle_boost_current:.3f}")
+            
+            set_item(1, 0, "DFE:", f"[{self.dfe_tap1_current:.3f}, {self.dfe_tap2_current:.3f}, {self.dfe_tap3_current:.3f}]")
+            set_item(1, 1, "Margin:", f"{self.eye_metrics.get('margin_5pct', 0.0):.4f}")
+            set_item(1, 2, "Errors:", str(self.eye_metrics.get('error_count', 0)))
+            set_item(1, 3, "Sample Max:", f"{self.eye_metrics.get('eye_max', 0.0):.4f}")
+            set_item(1, 4, "Spread:", f"{self.eye_metrics.get('center_spread', 0.0):.4f}")
         else:
-            metric_max_label = "Eye Max"
-            metric_min_label = "Eye Min"
-            metric_spread_label = "Center Spread"
-            dfe_metric_str = f"Eye Height = {self.eye_metrics.get('eye_height', 0.0):.4f}"
-            dfe_sign_note = ""
-
-        if self.nrz_show_detail:
-            text = (
-                "Teaching Focus: Preshoot raises the last bit before a transition. "
-                "De-emphasis lowers repeated bits. "
-                "dB mode is for level-based visualization. "
-                "Tap mode is a FIR coefficient reference.\n\n"
-                f"EQ State: Preset = {self.current_preset}    "
-                f"Control Mode = {self.control_mode}    "
-                f"Preshoot = {self.pre_db_current:.2f} dB    "
-                f"De-emphasis = {self.de_db_current:.2f} dB    "
-                f"Low-pass Alpha = {self.channel_alpha_current:.3f} (smaller = more ISI)\n\n"
-                f"RX EQ: CTLE Boost = {self.ctle_boost_current:.3f}    "
-                f"DFE Taps = [{self.dfe_tap1_current:.3f}, {self.dfe_tap2_current:.3f}, {self.dfe_tap3_current:.3f}]    "
-                f"View = {self.rx_view_mode}\n\n"
-                f"Tap / Level Reference: C-1 = {self.cm1_current:.4f}    "
-                f"C0 = {c0:.4f}    "
-                f"C+1 = {self.cp1_current:.4f}    "
-                f"Va = {va:.4f}    "
-                f"Vb = {vb:.4f}    "
-                f"Vc = {vc:.4f}    "
-                f"TapSum = {tap_sum:.4f}\n\n"
-                f"Eye Metrics: {dfe_metric_str}    "
-                f"{metric_max_label} = {self.eye_metrics.get('eye_max', 0):.4f}    "
-                f"{metric_min_label} = {self.eye_metrics.get('eye_min', 0):.4f}    "
-                f"{metric_spread_label} = {self.eye_metrics.get('center_spread', 0):.4f}\n\n"
-                f"Note: This is a teaching simulator, not a PCIe compliance tool. "
-                f"Preset values are approximate and for visualization only. "
-                f"Low-pass Alpha is a simplified ISI model, not a real PCIe channel model.\n"
-                f"{dfe_sign_note}"
-            )
-        else:
-            text = (
-                "Teaching Focus: Preshoot raises the bit before transition; De-emphasis lowers repeated bits.\n"
-                f"Preset = {self.current_preset}    Mode = {self.control_mode}    "
-                f"Low-pass Alpha = {self.channel_alpha_current:.3f}\n"
-                f"Preshoot = {self.pre_db_current:.2f} dB    De-emphasis = {self.de_db_current:.2f} dB    "
-                f"C-1 = {self.cm1_current:.4f}    C0 = {c0:.4f}    C+1 = {self.cp1_current:.4f}\n"
-                f"RX EQ: CTLE = {self.ctle_boost_current:.3f}   DFE = [{self.dfe_tap1_current:.3f}, {self.dfe_tap2_current:.3f}, {self.dfe_tap3_current:.3f}]\n"
-                f"{dfe_metric_str}    {metric_spread_label} = {self.eye_metrics.get('center_spread', 0):.4f}    \n"
-                f"Teaching visualization only, not PCIe compliance. {dfe_sign_note}"
-            )
-
-        self.info_text.setPlainText(text)
+            set_item(0, 2, "Pre:", f"{self.pre_db_current:.2f} dB")
+            set_item(0, 3, "De:", f"{self.de_db_current:.2f} dB")
+            set_item(0, 4, "CH Alpha:", f"{self.channel_alpha_current:.3f}")
+            
+            view_short = "Channel" if "Channel" in self.rx_view_mode else "CTLE"
+            set_item(1, 0, "RX:", view_short)
+            set_item(1, 1, "CTLE:", f"{self.ctle_boost_current:.3f}")
+            set_item(1, 2, "DFE:", f"[{self.dfe_tap1_current:.3f}, {self.dfe_tap2_current:.3f}, {self.dfe_tap3_current:.3f}]")
+            set_item(1, 3, "Eye H:", f"{self.eye_metrics.get('eye_height', 0.0):.4f}")
+            set_item(1, 4, "Spread:", f"{self.eye_metrics.get('center_spread', 0.0):.4f}")
 
 
 if __name__ == "__main__":
