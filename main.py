@@ -387,7 +387,6 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_cm1_current = 0.0
         self.pam4_cp1_current = 0.0
         self.pam4_alpha_current = 0.08
-        self.pam4_show_detail = False
         self.pam4_eye_mode = "raw"
         self.pam4_t_center_phase = SPB // 2
         self.pam4_t_center_score = 0.0
@@ -677,12 +676,39 @@ class PCIeTxEqSimulator(QMainWindow):
         layout.addWidget(self.pam4_wave_plot, stretch=4)
         layout.addWidget(self.pam4_eye_plot, stretch=3)
 
-        self.pam4_info_text = QPlainTextEdit()
-        self.pam4_info_text.setReadOnly(True)
-        self.pam4_info_text.setMinimumHeight(140)
-        self.pam4_info_text.setMaximumHeight(170)
-        self.pam4_info_text.setStyleSheet("font-size: 17px;")
-        layout.addWidget(self.pam4_info_text)
+        self.pam4_status_panel = QFrame()
+        self.pam4_status_panel.setMinimumHeight(90)
+        self.pam4_status_panel.setMaximumHeight(110)
+        self.pam4_status_panel.setStyleSheet("""
+            QFrame {
+                border: 1px solid #c0c0c0;
+                border-radius: 4px;
+                background-color: #f9f9f9;
+            }
+        """)
+        
+        self.pam4_status_layout = QGridLayout(self.pam4_status_panel)
+        self.pam4_status_layout.setContentsMargins(8, 4, 8, 4)
+        self.pam4_status_layout.setSpacing(4)
+        self.pam4_status_items = {}
+        
+        for r in range(2):
+            for c in range(4):
+                container = QWidget()
+                hlay = QHBoxLayout(container)
+                hlay.setContentsMargins(0, 0, 0, 0)
+                hlay.setSpacing(4)
+                lbl = QLabel()
+                lbl.setStyleSheet("font-size: 13px; color: #555; border: none; background: transparent;")
+                val = QLabel()
+                val.setStyleSheet("font-size: 16px; font-weight: bold; color: #111; border: none; background: transparent;")
+                hlay.addWidget(lbl)
+                hlay.addWidget(val)
+                hlay.addStretch()
+                self.pam4_status_layout.addWidget(container, r, c)
+                self.pam4_status_items[(r, c)] = (lbl, val)
+                
+        layout.addWidget(self.pam4_status_panel)
 
         control_layout = QHBoxLayout()
         preset_label = QLabel("Gen6 Preset")
@@ -707,13 +733,13 @@ class PCIeTxEqSimulator(QMainWindow):
         control_layout.addWidget(eye_mode_label)
         control_layout.addWidget(self.pam4_eye_mode_combo)
 
-        self.btn_pam4_new_wave = QPushButton("Generate New PAM4 Waveform")
+        self.btn_pam4_new_wave = QPushButton("New PAM4 Wave")
         self.btn_pam4_new_wave.clicked.connect(self.on_pam4_generate_new_waveform)
-        self.btn_pam4_reset_eq = QPushButton("Reset PAM4 EQ")
+        self.btn_pam4_reset_eq = QPushButton("Reset EQ")
         self.btn_pam4_reset_eq.clicked.connect(self.on_pam4_reset_eq)
-        self.btn_pam4_reset_channel = QPushButton("Reset PAM4 Channel")
+        self.btn_pam4_reset_channel = QPushButton("Reset CH")
         self.btn_pam4_reset_channel.clicked.connect(self.on_pam4_reset_channel)
-        self.btn_pam4_detail = QPushButton("Show Detail")
+        self.btn_pam4_detail = QPushButton("Detail")
         self.btn_pam4_detail.clicked.connect(self.on_toggle_pam4_detail)
         for btn in (
             self.btn_pam4_new_wave,
@@ -1407,9 +1433,25 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_redraw_all()
 
     def on_toggle_pam4_detail(self):
-        self.pam4_show_detail = not self.pam4_show_detail
-        self.btn_pam4_detail.setText("Hide Detail" if self.pam4_show_detail else "Show Detail")
-        self.update_pam4_info()
+        msg = QMessageBox(self)
+        msg.setWindowTitle("PAM4 TX EQ Details")
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("PAM4 Teaching Simulator Detailed Information")
+        msg.setInformativeText(
+            "Teaching Focus:\n"
+            "- PAM4 uses four levels and three eyes.\n"
+            "- This tab uses a simplified 4-tap FIR concept.\n"
+            "- C0 is calculated from C-2 / C-1 / C+1.\n"
+            "- Levels: Va, Vb, Vc1, Vc2, Vd.\n"
+            "- Ratios: Va/Vd, Vb/Vd, Vc1/Vd, Vc2/Vd.\n"
+            "- Metrics: De-emphasis, Preshoot 1, Preshoot 2, Boost.\n\n"
+            "Eye Modes:\n"
+            "- Raw Eye: Superimposes traces directly.\n"
+            "- Common t_center Eye: Centers traces based on the majority crossing phase.\n\n"
+            "Note: Q10 is a special preset (Note 2).\n"
+            "This is simplified visualization only. This is not a PCIe compliance calculator."
+        )
+        msg.exec_()
 
     def pam4_full_refresh(self):
         with self.ui_sync() as active:
@@ -1680,65 +1722,28 @@ class PCIeTxEqSimulator(QMainWindow):
             eye_mode_note = (
                 "Raw Eye uses fixed 2 UI slicing without common t_center re-centering."
             )
-        q10_note = ""
-        if self.gen6_preset_current == "Q10":
-            q10_note = (
-                " Q10 is a special preset / Note 2 and is not explicitly modeled. "
-                "Coefficients are reset to Q0 for visualization safety."
-            )
-        if self.pam4_show_detail:
-            text = (
-                "Teaching Focus: PAM4 uses four levels and three eyes; this tab uses a simplified 4-tap FIR concept. "
-                "C0 is automatically calculated from C-2 / C-1 / C+1.\n\n"
-                f"Preset / Tap: Gen6 Preset = {self.gen6_preset_current}    "
-                f"C-2 = {self.pam4_cm2_current:.4f}    "
-                f"C-1 = {self.pam4_cm1_current:.4f}    "
-                f"C0 = {c0:.4f}    "
-                f"C+1 = {self.pam4_cp1_current:.4f}    "
-                f"TapSum = {tap_sum:.4f}\n\n"
-                f"Level / Ratio: Va = {va:.4f}    "
-                f"Vb = {vb:.4f}    "
-                f"Vc1 = {vc1:.4f}    "
-                f"Vc2 = {vc2:.4f}    "
-                f"Vd = {vd:.4f}\n"
-                f"Va/Vd = {va_ratio:.3f}    "
-                f"Vb/Vd = {vb_ratio:.3f}    "
-                f"Vc1/Vd = {vc1_ratio:.3f}    "
-                f"Vc2/Vd = {vc2_ratio:.3f}\n\n"
-                f"dB Metrics: De-emphasis = {de_db:.2f} dB    "
-                f"Preshoot 1 = {pre1_db:.2f} dB    "
-                f"Preshoot 2 = {pre2_db:.2f} dB    "
-                f"Boost = {boost_db:.2f} dB    "
-                f"Low-pass Alpha = {self.pam4_alpha_current:.3f}    "
-                f"Eye Mode = {eye_mode_text}\n\n"
-                f"Common t_center = {self.pam4_t_center_phase} / {SPB} samples = {t_center_ui:.3f} UI    "
-                f"Common t_center Score = {self.pam4_t_center_score:.4f}\n\n"
-                f"Eye Metrics: Common-phase Upper Eye Opening = {self.pam4_eye_metrics['upper_eye']:.4f}    "
-                f"Common-phase Middle Eye Opening = {self.pam4_eye_metrics['middle_eye']:.4f}    "
-                f"Common-phase Lower Eye Opening = {self.pam4_eye_metrics['lower_eye']:.4f}    "
-                f"Common-phase Minimum Eye Opening = {self.pam4_eye_metrics['minimum_eye']:.4f}    "
-                f"Center UI Spread = {self.pam4_eye_metrics['center_spread']:.4f}\n\n"
-                f"Note: simplified visualization only. "
-                f"This is not a PCIe compliance calculator. "
-                f"{eye_mode_note}{q10_note}"
-            )
-        else:
-            text = (
-                "Teaching Focus: PAM4 has 4 levels and 3 eyes; this tab uses simplified 4-tap FIR.\n"
-                f"Preset = {self.gen6_preset_current}    Low-pass Alpha = {self.pam4_alpha_current:.3f}    "
-                f"Eye Mode = {eye_mode_text}\n"
-                f"C-2 = {self.pam4_cm2_current:.4f}    C-1 = {self.pam4_cm1_current:.4f}    "
-                f"C0 = {c0:.4f}    C+1 = {self.pam4_cp1_current:.4f}\n"
-                f"Common t_center = {self.pam4_t_center_phase} / {SPB} samples = {t_center_ui:.3f} UI    "
-                f"Score = {self.pam4_t_center_score:.4f}\n"
-                f"De-emphasis = {de_db:.2f} dB    Preshoot 1 = {pre1_db:.2f} dB    "
-                f"Preshoot 2 = {pre2_db:.2f} dB    Boost = {boost_db:.2f} dB\n"
-                f"Common-phase Upper Eye = {self.pam4_eye_metrics['upper_eye']:.4f}    "
-                f"Common-phase Middle Eye = {self.pam4_eye_metrics['middle_eye']:.4f}    "
-                f"Common-phase Lower Eye = {self.pam4_eye_metrics['lower_eye']:.4f}    "
-                f"Common-phase Minimum Eye = {self.pam4_eye_metrics['minimum_eye']:.4f}"
-            )
-        self.pam4_info_text.setPlainText(text)
+        eye_mode_text = "Raw" if self.pam4_eye_mode == "raw" else "Center"
+
+        def set_item(r, c, label_text, value_text):
+            lbl, val = self.pam4_status_items[(r, c)]
+            if label_text:
+                lbl.setText(label_text)
+                lbl.show()
+                val.setText(value_text)
+                val.show()
+            else:
+                lbl.hide()
+                val.hide()
+
+        set_item(0, 0, "Preset:", self.gen6_preset_current)
+        set_item(0, 1, "Eye:", eye_mode_text)
+        set_item(0, 2, "Alpha:", f"{self.pam4_alpha_current:.3f}")
+        set_item(0, 3, "tC:", f"{t_center_ui:.3f} UI")
+        
+        set_item(1, 0, "Taps:", f"{self.pam4_cm2_current:.3f} / {self.pam4_cm1_current:.3f} / {c0:.3f} / {self.pam4_cp1_current:.3f}")
+        set_item(1, 1, "U/M/L:", f"{self.pam4_eye_metrics['upper_eye']:.3f} / {self.pam4_eye_metrics['middle_eye']:.3f} / {self.pam4_eye_metrics['lower_eye']:.3f}")
+        set_item(1, 2, "Min Eye:", f"{self.pam4_eye_metrics['minimum_eye']:.4f}")
+        set_item(1, 3, "Spread:", f"{self.pam4_eye_metrics['center_spread']:.4f}")
 
     def make_tx_symbols(self):
         if self.control_mode == "tap":
