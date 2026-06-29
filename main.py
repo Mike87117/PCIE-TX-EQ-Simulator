@@ -286,6 +286,11 @@ def apply_ctle(wave, gain, alpha=0.08):
 def apply_dfe(ctle_wave, taps, spb, sampling_phase):
     """
     Symbol-rate Decision Feedback Equalizer.
+    
+    NOTE: DFE operates at symbol rate on sampling points. It does not
+    generate a real analog waveform. The reconstructed waveform is
+    provided for legacy visualization only and should not be used as
+    an analog eye.
     """
     num_symbols = len(ctle_wave) // spb
     samples = np.zeros(num_symbols)
@@ -574,7 +579,7 @@ class PCIeTxEqSimulator(QMainWindow):
         rx_view_label = QLabel("RX Eye/Wave View")
         rx_view_label.setFixedWidth(120)
         self.rx_view_combo = QComboBox()
-        self.rx_view_combo.addItems(["Channel (Before RX EQ)", "CTLE", "DFE (Decision-domain Eye)"])
+        self.rx_view_combo.addItems(["Channel (Before RX EQ)", "CTLE", "DFE (Sample Margin)"])
         self.rx_view_combo.currentIndexChanged.connect(self.on_rx_view_change)
         rx_control_layout.addWidget(rx_view_label)
         rx_control_layout.addWidget(self.rx_view_combo)
@@ -1152,7 +1157,7 @@ class PCIeTxEqSimulator(QMainWindow):
         if "CTLE" in self.rx_view_mode:
             return rx_results["ctle_wave"]
         elif "DFE" in self.rx_view_mode:
-            return rx_results["dfe_reconstructed_wave"]
+            return rx_results["ctle_wave"]
         else:
             return rx_results["ch_wave"]
 
@@ -1160,7 +1165,7 @@ class PCIeTxEqSimulator(QMainWindow):
         if "CTLE" in self.rx_view_mode:
             self.eye_plot.setTitle("Eye Diagram after CTLE")
         elif "DFE" in self.rx_view_mode:
-            self.eye_plot.setTitle("DFE Decision-domain Eye")
+            self.eye_plot.setTitle("DFE Corrected Sample Margin")
         else:
             self.eye_plot.setTitle("Eye Diagram after Channel")
 
@@ -1190,7 +1195,10 @@ class PCIeTxEqSimulator(QMainWindow):
         
         if self.should_update_realtime_eye():
             self.update_eye_title()
-            self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
+            if "DFE" in self.rx_view_mode:
+                self.update_dfe_sample_plot(rx_results, max_symbols=REALTIME_EYE_TRACES)
+            else:
+                self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
             self.update_eye_metrics(rx_wave, rx_results, max_traces=REALTIME_EYE_TRACES)
             self.update_info()
 
@@ -1203,7 +1211,10 @@ class PCIeTxEqSimulator(QMainWindow):
 
         self.update_waveform(tx_wave, ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
         self.update_eye_title()
-        self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
+        if "DFE" in self.rx_view_mode:
+            self.update_dfe_sample_plot(rx_results, max_symbols=MAX_EYE_TRACES)
+        else:
+            self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
         self.update_eye_metrics(rx_wave, rx_results, max_traces=MAX_EYE_TRACES)
         self.update_info()
 
@@ -1752,6 +1763,10 @@ class PCIeTxEqSimulator(QMainWindow):
     def update_eye_line(self, wave, max_traces=MAX_EYE_TRACES):
         self.eye_img.hide()
         self.eye_curve.show()
+        if hasattr(self, 'eye_zero_line'):
+            self.eye_zero_line.hide()
+        self.eye_curve.setPen(pg.mkPen((50, 150, 255, 100)))
+        self.eye_curve.setSymbol(None)
 
         seg_len = EYE_UI * SPB
         start = 20 * SPB
@@ -1783,6 +1798,43 @@ class PCIeTxEqSimulator(QMainWindow):
         self.eye_plot.setXRange(0, EYE_UI)
         ymax = max(1.3, float(np.max(np.abs(wave))))
         ymax *= 1.1
+        self.eye_plot.setYRange(-ymax, ymax)
+
+    def update_dfe_sample_plot(self, rx_results, max_symbols=200):
+        self.eye_img.hide()
+        self.eye_curve.show()
+        
+        if not hasattr(self, 'eye_zero_line'):
+            self.eye_zero_line = pg.InfiniteLine(angle=0, pen=pg.mkPen('y', style=Qt.DashLine))
+            self.eye_plot.addItem(self.eye_zero_line)
+        self.eye_zero_line.show()
+        
+        samples = rx_results["dfe_corrected_samples"]
+        if len(samples) == 0:
+            self.eye_curve.setData([], [])
+            return
+            
+        start_idx = 20
+        if start_idx < len(samples):
+            samples = samples[start_idx:]
+        else:
+            start_idx = 0
+            
+        if len(samples) > max_symbols:
+            idx = np.linspace(0, len(samples) - 1, max_symbols, dtype=int)
+            samples = samples[idx]
+            x_vals = idx + start_idx
+        else:
+            x_vals = np.arange(len(samples)) + start_idx
+            
+        self.eye_curve.setPen(None)
+        self.eye_curve.setSymbol('o')
+        self.eye_curve.setSymbolSize(6)
+        self.eye_curve.setSymbolBrush(pg.mkBrush(100, 200, 255, 200))
+        self.eye_curve.setData(x_vals, samples)
+        
+        self.eye_plot.setXRange(max(0, x_vals[0] - 5), x_vals[-1] + 5)
+        ymax = max(1.3, float(np.max(np.abs(samples)))) * 1.1
         self.eye_plot.setYRange(-ymax, ymax)
 
     def update_eye_density(self, wave):
