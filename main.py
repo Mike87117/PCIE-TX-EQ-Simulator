@@ -1945,6 +1945,8 @@ class PCIeTxEqSimulator(QMainWindow):
         }
 
     def update_info(self):
+        c0, _, _, _, _, _ = calc_levels(self.cm1_current, self.cp1_current)
+        
         def set_item(r, c, label_text, value_text):
             lbl, val = self.status_items[(r, c)]
             if label_text:
@@ -1971,11 +1973,10 @@ class PCIeTxEqSimulator(QMainWindow):
             set_item(0, 2, "Pre/De:", f"{self.pre_db_current:.2f} / {self.de_db_current:.2f} dB")
             set_item(0, 3, "CH:", f"{self.channel_alpha_current:.3f}")
             
-            view_short = "Channel" if "Channel" in self.rx_view_mode else "CTLE"
-            set_item(1, 0, "RX:", view_short)
-            set_item(1, 1, "CTLE:", f"{self.ctle_boost_current:.3f}")
-            set_item(1, 2, "Eye H:", f"{self.eye_metrics.get('eye_height', 0.0):.4f}")
-            set_item(1, 3, "Spread:", f"{self.eye_metrics.get('center_spread', 0.0):.4f}")
+            set_item(1, 0, "C-1:", f"{self.cm1_current:.4f}")
+            set_item(1, 1, "C0:", f"{c0:.4f}")
+            set_item(1, 2, "C+1:", f"{self.cp1_current:.4f}")
+            set_item(1, 3, "Eye:", f"{self.eye_metrics.get('eye_height', 0.0):.4f} / {self.eye_metrics.get('center_spread', 0.0):.4f}")
 
 
 if __name__ == "__main__":
