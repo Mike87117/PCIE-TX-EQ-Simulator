@@ -1447,7 +1447,7 @@ class PCIeTxEqSimulator(QMainWindow):
             "- Metrics: De-emphasis, Preshoot 1, Preshoot 2, Boost.\n\n"
             "Eye Modes:\n"
             "- Raw Eye: Superimposes traces directly.\n"
-            "- Common t_center Eye: Centers traces based on the majority crossing phase.\n\n"
+            "- Common t_center Eye: Estimates one shared sampling phase that maximizes the minimum upper/middle/lower eye opening, then slices the 2 UI eye around that shared t_center. It does not independently align each PAM4 eye.\n\n"
             "Note: Q10 is a special preset (Note 2).\n"
             "This is simplified visualization only. This is not a PCIe compliance calculator."
         )
