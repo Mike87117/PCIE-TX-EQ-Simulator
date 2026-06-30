@@ -61,46 +61,53 @@ symbols = 2 * bits - 1
 # PCIe TX EQ math
 # =========================
 
+def taps_to_db(cm1, cp1):
+    p = abs(cm1)
+    q = abs(cp1)
+
+    # C-1 controls preshoot.
+    # Larger p means higher Vc/Vb.
+    r_pre = 1.0 / max(1.0 - 2.0 * p, 1e-6)
+
+    # C+1 controls de-emphasis.
+    # Larger q means lower Vb/Va.
+    r_de = max(1.0 - 2.0 * q, 1e-6)
+
+    pre_db = 20 * np.log10(r_pre)
+    de_db = 20 * np.log10(r_de)
+
+    return pre_db, de_db
+
+
 def calc_levels(cm1, cp1):
     c0 = 1 - abs(cm1) - abs(cp1)
-    va = abs(cm1 * 1 + c0 * 1 + cp1 * -1)
-    vb = abs(cm1 * 1 + c0 * 1 + cp1 * 1)
-    vc = abs(cm1 * -1 + c0 * 1 + cp1 * 1)
-    de_db = 20 * np.log10(vb / va) if va > 0 and vb > 0 else -99
-    pre_db = 20 * np.log10(vc / vb) if vb > 0 and vc > 0 else 99
+
+    pre_db, de_db = taps_to_db(cm1, cp1)
+
+    va = 1.0
+    vb = 10 ** (de_db / 20)
+    vc = vb * 10 ** (pre_db / 20)
+
     return c0, va, vb, vc, pre_db, de_db
 
 
 def db_to_taps(pre_db, de_db):
-    eps = 1e-6
-
     pre_db = float(np.clip(pre_db, 0.0, 6.0))
     de_db = float(np.clip(de_db, -12.0, 0.0))
-
-    if abs(pre_db) < eps and abs(de_db) < eps:
-        return 0.0, 0.0
 
     r_pre = 10 ** (pre_db / 20)
     r_de = 10 ** (de_db / 20)
 
-    denom = (1 - r_de) + r_pre * r_de
-    if denom <= eps:
-        return 0.0, 0.0
+    # inverse of:
+    # r_pre = 1 / (1 - 2p)
+    # r_de = 1 - 2q
+    p = (1.0 - 1.0 / r_pre) / 2.0
+    q = (1.0 - r_de) / 2.0
 
-    va = 1 / denom
-    p = (1 - va) / 2
-    q = va * (1 - r_de) / 2
+    p = float(np.clip(p, 0.0, 0.3))
+    q = float(np.clip(q, 0.0, 0.3))
 
-    p = float(np.clip(p, 0.0, 0.45))
-    q = float(np.clip(q, 0.0, 0.45))
-    if p + q >= 0.49:
-        scale = 0.49 / (p + q)
-        p *= scale
-        q *= scale
-
-    cm1 = -p
-    cp1 = -q
-    return cm1, cp1
+    return -p, -q
 
 
 def tx_fir(symbols_in, cm1, cp1, normalize_mode="none"):
@@ -1176,11 +1183,14 @@ class PCIeTxEqSimulator(QMainWindow):
         msg.setText("Teaching Simulator Detailed Information")
         msg.setInformativeText(
             "Teaching Focus:\n"
-            "- C-1 / Preshoot affects the last bit before a transition.\n"
-            "- C+1 / De-emphasis lowers repeated bits so the first bit after transition remains relatively higher.\n"
-            "- The waveform uses a unified FIR model.\n"
-            "- Default NRZ display does not use steady normalization, so de-emphasis is shown as repeated-bit voltage reduction.\n"
-            "- This is a teaching simulator, not a PCIe compliance tool.\n\n"
+            "- NRZ waveform uses a measurement-like Va/Vb/Vc level model.\n"
+            "- Va is the first bit after transition.\n"
+            "- Vb is the repeated / de-emphasized level.\n"
+            "- Vc is the last bit before transition / preshoot level.\n"
+            "- C-1 controls Preshoot and raises Vc relative to Vb.\n"
+            "- C+1 controls De-emphasis and lowers Vb relative to Va.\n"
+            "- tx_fir() is kept only as an ideal FIR reference, not as the default NRZ waveform display.\n"
+            "- This is a teaching simulator, not a PCIe compliance calculator.\n\n"
             "Channel & RX EQ:\n"
             "- Low-pass Alpha is a simplified ISI model, not a real PCIe channel.\n"
             "- CTLE provides high-frequency boost.\n"
