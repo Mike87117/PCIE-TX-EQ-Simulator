@@ -131,6 +131,34 @@ def tx_fir(symbols_in, cm1, cp1, normalize_mode="none"):
     return y, c0
 
 
+def tx_eq_levels(symbols_in, preshoot_db, deemph_db):
+    va = 1.0
+    vb = 10 ** (deemph_db / 20)
+    vc = vb * 10 ** (preshoot_db / 20)
+
+    y = np.zeros_like(symbols_in, dtype=float)
+
+    for i in range(len(symbols_in)):
+        prev_bit = symbols_in[i - 1] if i > 0 else symbols_in[i]
+        now_bit = symbols_in[i]
+        next_bit = symbols_in[i + 1] if i < len(symbols_in) - 1 else symbols_in[i]
+
+        is_first_after_transition = now_bit != prev_bit
+        is_last_before_transition = now_bit != next_bit
+        is_repeated = now_bit == prev_bit
+
+        if is_last_before_transition and is_repeated:
+            amp = vc
+        elif is_repeated:
+            amp = vb
+        else:
+            amp = va
+
+        y[i] = now_bit * amp
+
+    return y
+
+
 def simple_channel(wave, alpha=0.08):
     out = np.zeros_like(wave)
     out[0] = wave[0]
@@ -1719,11 +1747,10 @@ class PCIeTxEqSimulator(QMainWindow):
         set_item(1, 3, "Spread:", f"{self.pam4_eye_metrics['center_spread']:.4f}")
 
     def make_tx_symbols(self):
-        tx_sym, _ = tx_fir(
+        tx_sym = tx_eq_levels(
             self.symbols,
-            self.cm1_current,
-            self.cp1_current,
-            normalize_mode="none",
+            self.pre_db_current,
+            self.de_db_current,
         )
         return tx_sym
 
