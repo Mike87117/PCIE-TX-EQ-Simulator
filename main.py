@@ -560,47 +560,32 @@ class PCIeTxEqSimulator(QMainWindow):
         self.slider_cp1 = self.make_slider(
             "C+1", -300, 0, int(self.cp1_current * 1000)
         )
-        self.slider_pre = self.make_slider(
-            "Preshoot dB", 0, 600, int(self.pre_db_current * 100)
-        )
-        self.slider_de = self.make_slider(
-            "De-emphasis dB", -1200, 0, int(self.de_db_current * 100)
-        )
         self.slider_alpha = self.make_slider(
             "Low-pass Alpha", 1, 300, int(self.channel_alpha_current * 1000)
         )
 
         self.slider_cm1["edit"].setValidator(QDoubleValidator(-0.3, 0.0, 4, self))
         self.slider_cp1["edit"].setValidator(QDoubleValidator(-0.3, 0.0, 4, self))
-        self.slider_pre["edit"].setValidator(QDoubleValidator(0.0, 6.0, 2, self))
-        self.slider_de["edit"].setValidator(QDoubleValidator(-12.0, 0.0, 2, self))
+        self.slider_alpha["edit"].setValidator(QDoubleValidator(0.001, 0.3, 3, self))
 
         tx_layout.addLayout(self.slider_cm1["layout"])
         tx_layout.addLayout(self.slider_cp1["layout"])
-        tx_layout.addLayout(self.slider_pre["layout"])
-        tx_layout.addLayout(self.slider_de["layout"])
         tx_layout.addLayout(self.slider_alpha["layout"])
         tx_layout.addStretch()
 
         self.slider_cm1["slider"].valueChanged.connect(self.on_tap_slider_change)
         self.slider_cp1["slider"].valueChanged.connect(self.on_tap_slider_change)
-        self.slider_pre["slider"].valueChanged.connect(self.on_db_slider_change)
-        self.slider_de["slider"].valueChanged.connect(self.on_db_slider_change)
         self.slider_alpha["slider"].valueChanged.connect(self.on_alpha_slider_change)
 
         for s in (
             self.slider_cm1["slider"],
             self.slider_cp1["slider"],
-            self.slider_pre["slider"],
-            self.slider_de["slider"],
             self.slider_alpha["slider"],
         ):
             s.sliderReleased.connect(self.on_slider_released)
 
         self.slider_cm1["edit"].editingFinished.connect(lambda: self.on_edit_change("cm1"))
         self.slider_cp1["edit"].editingFinished.connect(lambda: self.on_edit_change("cp1"))
-        self.slider_pre["edit"].editingFinished.connect(lambda: self.on_edit_change("pre"))
-        self.slider_de["edit"].editingFinished.connect(lambda: self.on_edit_change("de"))
         self.slider_alpha["edit"].editingFinished.connect(lambda: self.on_edit_change("alpha"))
 
         # RX EQ Section
@@ -852,8 +837,6 @@ class PCIeTxEqSimulator(QMainWindow):
     def sync_ui_from_state(self, update_edits=True):
         self.set_slider_value_silent(self.slider_cm1["slider"], int(self.cm1_current * 1000))
         self.set_slider_value_silent(self.slider_cp1["slider"], int(self.cp1_current * 1000))
-        self.set_slider_value_silent(self.slider_pre["slider"], int(self.pre_db_current * 100))
-        self.set_slider_value_silent(self.slider_de["slider"], int(self.de_db_current * 100))
         self.set_slider_value_silent(self.slider_alpha["slider"], int(self.channel_alpha_current * 1000))
         self.set_preset_combo_silent(self.current_preset)
 
@@ -874,8 +857,6 @@ class PCIeTxEqSimulator(QMainWindow):
         edit_rows = [
             (self.slider_cm1["edit"], f"{self.cm1_current:.4f}"),
             (self.slider_cp1["edit"], f"{self.cp1_current:.4f}"),
-            (self.slider_pre["edit"], f"{self.pre_db_current:.2f}"),
-            (self.slider_de["edit"], f"{self.de_db_current:.2f}"),
             (self.slider_alpha["edit"], f"{self.channel_alpha_current:.3f}"),
             (self.slider_ctle["edit"], f"{self.ctle_boost_current:.3f}"),
             (self.slider_dfe1["edit"], f"{self.dfe_tap1_current:.3f}"),
@@ -955,22 +936,6 @@ class PCIeTxEqSimulator(QMainWindow):
                     _, _, _, _, pre_db, de_db = calc_levels(self.cm1_current, self.cp1_current)
                     self.pre_db_current = float(np.clip(pre_db, 0.0, 6.0))
                     self.de_db_current = float(np.clip(de_db, -12.0, 0.0))
-                elif target == "pre":
-                    self.control_mode = "db"
-                    self.set_custom_preset()
-                    pre_db = abs(float(self.slider_pre["edit"].text()))
-                    self.pre_db_current = float(np.clip(pre_db, 0.0, 6.0))
-                    self.cm1_current, self.cp1_current = db_to_taps(
-                        self.pre_db_current, self.de_db_current
-                    )
-                elif target == "de":
-                    self.control_mode = "db"
-                    self.set_custom_preset()
-                    de_db = -abs(float(self.slider_de["edit"].text()))
-                    self.de_db_current = float(np.clip(de_db, -12.0, 0.0))
-                    self.cm1_current, self.cp1_current = db_to_taps(
-                        self.pre_db_current, self.de_db_current
-                    )
                 elif target == "alpha":
                     alpha = float(self.slider_alpha["edit"].text())
                     self.channel_alpha_current = float(np.clip(alpha, 0.001, 0.3))
@@ -1002,26 +967,6 @@ class PCIeTxEqSimulator(QMainWindow):
             else:
                 self.redraw_all()
 
-    def on_db_slider_change(self):
-        if self.syncing_ui:
-            return
-
-        with self.ui_sync() as active:
-            if not active:
-                return
-            self.control_mode = "db"
-            self.set_custom_preset()
-            self.pre_db_current = self.slider_pre["slider"].value() / 100
-            self.de_db_current = self.slider_de["slider"].value() / 100
-            self.cm1_current, self.cp1_current = db_to_taps(
-                self.pre_db_current, self.de_db_current
-            )
-            self.sync_ui_from_state(update_edits=True)
-            if self.is_any_slider_down():
-                self.update_nrz_realtime()
-            else:
-                self.redraw_all()
-
     def on_alpha_slider_change(self):
         if self.syncing_ui:
             return
@@ -1040,8 +985,7 @@ class PCIeTxEqSimulator(QMainWindow):
         return any(
             s["slider"].isSliderDown()
             for s in (
-                self.slider_cm1, self.slider_cp1, self.slider_pre, 
-                self.slider_de, self.slider_alpha,
+                self.slider_cm1, self.slider_cp1, self.slider_alpha,
                 self.slider_ctle, self.slider_dfe1, self.slider_dfe2, self.slider_dfe3
             )
         )
@@ -1184,11 +1128,13 @@ class PCIeTxEqSimulator(QMainWindow):
         msg.setInformativeText(
             "Teaching Focus:\n"
             "- NRZ waveform uses a measurement-like Va/Vb/Vc level model.\n"
+            "- User directly controls C-1 and C+1.\n"
+            "- C-1 controls Preshoot and raises Vc relative to Vb.\n"
+            "- C+1 controls De-emphasis and lowers Vb relative to Va.\n"
+            "- Preshoot dB and De-emphasis dB are displayed as derived measurement values, not direct UI controls.\n"
             "- Va is the first bit after transition.\n"
             "- Vb is the repeated / de-emphasized level.\n"
             "- Vc is the last bit before transition / preshoot level.\n"
-            "- C-1 controls Preshoot and raises Vc relative to Vb.\n"
-            "- C+1 controls De-emphasis and lowers Vb relative to Va.\n"
             "- tx_fir() is kept only as an ideal FIR reference, not as the default NRZ waveform display.\n"
             "- This is a teaching simulator, not a PCIe compliance calculator.\n\n"
             "Channel & RX EQ:\n"
