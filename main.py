@@ -881,12 +881,24 @@ class PCIeTxEqSimulator(QMainWindow):
 
     def apply_preset(self, preset_id):
         pre_db, de_db = PCIE_PRESET_DB_TABLE[preset_id]
-        self.pre_db_current = float(np.clip(pre_db, 0.0, 6.0))
-        self.de_db_current = float(np.clip(de_db, -12.0, 0.0))
+
+        requested_pre_db = float(np.clip(pre_db, 0.0, 6.0))
+        requested_de_db = float(np.clip(de_db, -12.0, 0.0))
+
         self.cm1_current, self.cp1_current = db_to_taps(
-            self.pre_db_current, self.de_db_current
+            requested_pre_db,
+            requested_de_db
         )
-        self.control_mode = "db"
+
+        _, _, _, _, actual_pre_db, actual_de_db = calc_levels(
+            self.cm1_current,
+            self.cp1_current
+        )
+
+        self.pre_db_current = float(np.clip(actual_pre_db, 0.0, 6.0))
+        self.de_db_current = float(np.clip(actual_de_db, -12.0, 0.0))
+
+        self.control_mode = "preset"
         self.current_preset = f"Preset {preset_id}"
 
     def on_preset_change(self, _index):
@@ -1081,7 +1093,7 @@ class PCIeTxEqSimulator(QMainWindow):
                 self.pre_db_current, self.de_db_current
             )
             self.current_preset = "Preset 4"
-            self.control_mode = "db"
+            self.control_mode = "preset"
             self.sync_ui_from_state(update_edits=True)
             self.redraw_all()
 
@@ -1107,7 +1119,7 @@ class PCIeTxEqSimulator(QMainWindow):
                 self.pre_db_current, self.de_db_current
             )
             self.current_preset = "Preset 4"
-            self.control_mode = "db"
+            self.control_mode = "preset"
             self.channel_alpha_current = 0.08
             
             # Reset RX EQ too
