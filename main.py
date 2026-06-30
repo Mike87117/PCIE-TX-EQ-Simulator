@@ -65,7 +65,7 @@ def calc_levels(cm1, cp1):
     c0 = 1 - abs(cm1) - abs(cp1)
     va = abs(cm1 * 1 + c0 * 1 + cp1 * -1)
     vb = abs(cm1 * 1 + c0 * 1 + cp1 * 1)
-    vc = abs(cm1 * 1 + c0 * -1 + cp1 * -1)
+    vc = abs(cm1 * -1 + c0 * 1 + cp1 * 1)
     de_db = 20 * np.log10(vb / va) if va > 0 and vb > 0 else -99
     pre_db = 20 * np.log10(vc / vb) if vb > 0 and vc > 0 else 99
     return c0, va, vb, vc, pre_db, de_db
@@ -74,49 +74,36 @@ def calc_levels(cm1, cp1):
 def db_to_taps(pre_db, de_db):
     eps = 1e-6
 
-    # Pure preshoot: only C-1 active, C+1 ~ 0
-    if abs(de_db) < eps and abs(pre_db) >= eps:
-        r_pre = 10 ** (pre_db / 20)
-        cm1 = (r_pre - 1) / (r_pre + 1)
-        cp1 = 0.0
-        cm1 = float(np.clip(cm1, 0.0, 0.45))
-        return cm1, cp1
+    pre_db = float(np.clip(pre_db, 0.0, 6.0))
+    de_db = float(np.clip(de_db, -12.0, 0.0))
 
-    # Pure de-emphasis: only C+1 active, C-1 ~ 0
-    if abs(pre_db) < eps and abs(de_db) >= eps:
-        r_de = 10 ** (de_db / 20)
-        cp1_mag = (1 - r_de) / (1 + r_de)
-        cm1 = 0.0
-        cp1 = -float(np.clip(cp1_mag, 0.0, 0.45))
-        return cm1, cp1
+    if abs(pre_db) < eps and abs(de_db) < eps:
+        return 0.0, 0.0
 
-    # Mixed mode
-    r_de = 10 ** (de_db / 20)
     r_pre = 10 ** (pre_db / 20)
+    r_de = 10 ** (de_db / 20)
+
     denom = (1 - r_de) + r_pre * r_de
+    if denom <= eps:
+        return 0.0, 0.0
+
     va = 1 / denom
     p = (1 - va) / 2
     q = va * (1 - r_de) / 2
-    p = np.clip(p, 0, 0.45)
-    q = np.clip(q, 0, 0.45)
+
+    p = float(np.clip(p, 0.0, 0.45))
+    q = float(np.clip(q, 0.0, 0.45))
     if p + q >= 0.49:
         scale = 0.49 / (p + q)
         p *= scale
         q *= scale
-    cm1 = float(p)
-    cp1 = -float(q)
 
-    # Keep |C-1|+|C0|+|C+1| normalized and robust numerically.
-    c0 = 1 - abs(cm1) - abs(cp1)
-    norm = abs(cm1) + abs(c0) + abs(cp1)
-    if norm > eps:
-        cm1 /= norm
-        cp1 /= norm
-
+    cm1 = -p
+    cp1 = -q
     return cm1, cp1
 
 
-def tx_fir(symbols_in, cm1, cp1):
+def tx_fir(symbols_in, cm1, cp1, normalize_mode="steady"):
     c0 = 1 - abs(cm1) - abs(cp1)
     padded = np.pad(symbols_in, (1, 1), mode="edge")
     y = []
@@ -130,7 +117,14 @@ def tx_fir(symbols_in, cm1, cp1):
             cp1 * prev_bit
         )
         y.append(out)
-    return np.array(y), c0
+    y = np.array(y)
+
+    if normalize_mode == "steady":
+        steady_level = abs(cm1 + c0 + cp1)
+        if steady_level > 1e-9:
+            y = y / steady_level
+
+    return y, c0
 
 
 def simple_channel(wave, alpha=0.08):
@@ -139,33 +133,6 @@ def simple_channel(wave, alpha=0.08):
     for i in range(1, len(wave)):
         out[i] = out[i - 1] + alpha * (wave[i] - out[i - 1])
     return out
-
-
-def tx_eq_pattern(symbols_in, preshoot_db, deemph_db):
-    va = 1.0
-    vb = 10 ** (deemph_db / 20)
-    vc = vb * 10 ** (preshoot_db / 20)
-
-    y = np.zeros_like(symbols_in, dtype=float)
-
-    for i in range(len(symbols_in)):
-        prev_bit = symbols_in[i - 1] if i > 0 else symbols_in[i]
-        now_bit = symbols_in[i]
-        next_bit = symbols_in[i + 1] if i < len(symbols_in) - 1 else symbols_in[i]
-
-        is_before_transition = now_bit != next_bit
-        is_repeated = now_bit == prev_bit
-
-        if is_before_transition and is_repeated:
-            amp = vc
-        elif is_repeated:
-            amp = vb
-        else:
-            amp = va
-
-        y[i] = now_bit * amp
-
-    return y
 
 
 def pam4_symbols_from_random(count):
@@ -549,7 +516,7 @@ class PCIeTxEqSimulator(QMainWindow):
         rx_layout = QVBoxLayout(rx_group)
 
         self.slider_cm1 = self.make_slider(
-            "C-1", 0, 300, int(self.cm1_current * 1000)
+            "C-1", -300, 0, int(self.cm1_current * 1000)
         )
         self.slider_cp1 = self.make_slider(
             "C+1", -300, 0, int(self.cp1_current * 1000)
@@ -564,7 +531,7 @@ class PCIeTxEqSimulator(QMainWindow):
             "Low-pass Alpha", 1, 300, int(self.channel_alpha_current * 1000)
         )
 
-        self.slider_cm1["edit"].setValidator(QDoubleValidator(0.0, 0.3, 4, self))
+        self.slider_cm1["edit"].setValidator(QDoubleValidator(-0.3, 0.0, 4, self))
         self.slider_cp1["edit"].setValidator(QDoubleValidator(-0.3, 0.0, 4, self))
         self.slider_pre["edit"].setValidator(QDoubleValidator(0.0, 6.0, 2, self))
         self.slider_de["edit"].setValidator(QDoubleValidator(-12.0, 0.0, 2, self))
@@ -881,7 +848,7 @@ class PCIeTxEqSimulator(QMainWindow):
                 self.set_edit_text_silent(edit, text)
 
     def enforce_tap_constraint(self, cm1, cp1):
-        cm1 = float(np.clip(abs(cm1), 0.0, 0.3))
+        cm1 = float(np.clip(-abs(cm1), -0.3, 0.0))
         cp1 = float(np.clip(-abs(cp1), -0.3, 0.0))
         if abs(cm1) + abs(cp1) >= 0.49:
             scale = 0.49 / (abs(cm1) + abs(cp1))
@@ -1178,15 +1145,19 @@ class PCIeTxEqSimulator(QMainWindow):
         msg.setInformativeText(
             "Teaching Focus:\n"
             "- Preshoot raises the last bit before a transition.\n"
-            "- De-emphasis lowers repeated bits.\n"
-            "- dB mode is for level-based visualization.\n"
-            "- Tap mode is a FIR coefficient reference.\n\n"
+            "- De-emphasis makes repeated bits lower relative to transition-related bits.\n"
+            "- dB mode converts Preshoot / De-emphasis into FIR taps.\n"
+            "- Tap mode directly edits FIR coefficients.\n"
+            "- NRZ waveform is generated by one unified FIR model.\n"
+            "- C0 is calculated from C-1 and C+1.\n\n"
             "Channel & RX EQ:\n"
             "- Low-pass Alpha is a simplified ISI model, not a real PCIe channel.\n"
             "- CTLE provides high-frequency boost.\n"
             "- DFE operates at symbol rate. It uses previous slicer decisions to subtract post-cursor ISI.\n"
             "- DFE sign convention: corrected[n] = sample[n] - tap * decision[n-1].\n\n"
-            "Note: This is a teaching simulator, not a PCIe compliance tool."
+            "Note:\n"
+            "- This simulator uses steady-level normalization for easier visualization.\n"
+            "- This is a teaching simulator, not a PCIe compliance tool."
         )
         msg.exec_()
 
@@ -1746,10 +1717,8 @@ class PCIeTxEqSimulator(QMainWindow):
         set_item(1, 3, "Spread:", f"{self.pam4_eye_metrics['center_spread']:.4f}")
 
     def make_tx_symbols(self):
-        if self.control_mode == "tap":
-            tx_sym, _ = tx_fir(self.symbols, self.cm1_current, self.cp1_current)
-            return tx_sym
-        return tx_eq_pattern(self.symbols, self.pre_db_current, self.de_db_current)
+        tx_sym, _ = tx_fir(self.symbols, self.cm1_current, self.cp1_current)
+        return tx_sym
 
     def update_waveform(self, tx_wave, ch_wave, rx_wave=None):
         length = PLOT_BITS * SPB
