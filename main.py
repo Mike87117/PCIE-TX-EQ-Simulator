@@ -254,18 +254,22 @@ def validate_gen6_presets():
 def gen6_pam4_fir(symbols_in, cm2, cm1, cp1):
     cm2, cm1, cp1 = constrain_gen6_taps(cm2, cm1, cp1)
     c0 = 1.0 - abs(cm2) - abs(cm1) - abs(cp1)
-    padded = np.pad(symbols_in, (2, 1), mode="edge")
+    # Simulator convention:
+    # C-2 / C-1 are precursor taps.
+    # C+1 is the post-cursor tap.
+    # This matches the NRZ tx_fir() convention used in this project.
+    padded = np.pad(symbols_in, (1, 2), mode="edge")
     y = []
-    for i in range(2, len(padded) - 1):
-        prev2_sym = padded[i - 2]
+    for i in range(1, len(padded) - 2):
         prev_sym = padded[i - 1]
         now_sym = padded[i]
         next_sym = padded[i + 1]
+        next2_sym = padded[i + 2]
         out = (
-            cm2 * prev2_sym +
-            cm1 * prev_sym +
+            cm2 * next2_sym +
+            cm1 * next_sym +
             c0 * now_sym +
-            cp1 * next_sym
+            cp1 * prev_sym
         )
         y.append(out)
     return np.array(y), c0
@@ -706,11 +710,8 @@ class PCIeTxEqSimulator(QMainWindow):
         preset_label.setFixedWidth(120)
         self.gen6_preset_combo = QComboBox()
         self.gen6_preset_combo.addItem("Custom")
-        for q in range(11):
-            label = f"Q{q}"
-            if q == 10:
-                label = "Q10 (special / Note 2)"
-            self.gen6_preset_combo.addItem(label)
+        for q in range(10):
+            self.gen6_preset_combo.addItem(f"Q{q}")
         self.gen6_preset_combo.currentIndexChanged.connect(self.on_gen6_preset_change)
         control_layout.addWidget(preset_label)
         control_layout.addWidget(self.gen6_preset_combo)
@@ -1250,8 +1251,6 @@ class PCIeTxEqSimulator(QMainWindow):
         self.gen6_preset_combo.blockSignals(True)
         try:
             target = self.gen6_preset_current
-            if target == "Q10":
-                target = "Q10 (special / Note 2)"
             idx = self.gen6_preset_combo.findText(target)
             if idx >= 0:
                 self.gen6_preset_combo.setCurrentIndex(idx)
@@ -1282,13 +1281,6 @@ class PCIeTxEqSimulator(QMainWindow):
     def apply_gen6_preset(self, preset_name):
         if preset_name == "Custom":
             self.gen6_preset_current = "Custom"
-            return
-
-        if preset_name.startswith("Q10"):
-            self.gen6_preset_current = "Q10"
-            self.pam4_cm2_current = 0.0
-            self.pam4_cm1_current = 0.0
-            self.pam4_cp1_current = 0.0
             return
 
         if preset_name in PCIE_GEN6_PRESET_TAP_TABLE:
@@ -1417,7 +1409,6 @@ class PCIeTxEqSimulator(QMainWindow):
             "Eye Modes:\n"
             "- Raw Eye: Superimposes traces directly.\n"
             "- Common t_center Eye: Estimates one shared sampling phase that maximizes the minimum upper/middle/lower eye opening, then slices the 2 UI eye around that shared t_center. It does not independently align each PAM4 eye.\n\n"
-            "Note: Q10 is a special preset (Note 2).\n"
             "This is simplified visualization only. This is not a PCIe compliance calculator."
         )
         msg.exec_()
@@ -1551,14 +1542,22 @@ class PCIeTxEqSimulator(QMainWindow):
             return invalid
 
         center_samples = wave[center_positions]
-        lower_band = center_samples[center_samples < -2 / 3]
-        mid_low_band = center_samples[
-            (center_samples >= -2 / 3) & (center_samples < 0)
-        ]
-        mid_high_band = center_samples[
-            (center_samples >= 0) & (center_samples < 2 / 3)
-        ]
-        upper_band = center_samples[center_samples >= 2 / 3]
+        symbol_indices = center_positions // SPB
+        valid_mask = symbol_indices < len(self.pam4_symbols)
+        if np.count_nonzero(valid_mask) < 20:
+            return invalid
+
+        center_positions = center_positions[valid_mask]
+        symbol_indices = symbol_indices[valid_mask]
+        center_samples = wave[center_positions]
+        ref_symbols = self.pam4_symbols[symbol_indices]
+
+        # Group samples by transmitted PAM4 symbol instead of measured voltage.
+        # Voltage-threshold grouping can misclassify samples after TX EQ and channel ISI.
+        lower_band = center_samples[np.isclose(ref_symbols, -1.0)]
+        mid_low_band = center_samples[np.isclose(ref_symbols, -1.0 / 3.0)]
+        mid_high_band = center_samples[np.isclose(ref_symbols, 1.0 / 3.0)]
+        upper_band = center_samples[np.isclose(ref_symbols, 1.0)]
 
         if min(
             lower_band.size,
