@@ -44,6 +44,16 @@ from pcie_eq.metrics import (
 )
 from pcie_eq.models import NrzSimulationConfig, Pam4SimulationConfig
 from pcie_eq.pipeline import run_simulation
+from pcie_eq.gui.constants import (
+    BIT_COUNT,
+    SPB,
+    PLOT_BITS,
+    EYE_UI,
+    MAX_EYE_TRACES,
+    REALTIME_EYE_TRACES,
+    REALTIME_EYE_INTERVAL_MS,
+    PAM4_SYMBOL_COUNT,
+)
 from pcie_eq.gui.nrz_tab import build_nrz_tab
 from pcie_eq.gui.pam4_tab import build_pam4_tab
 
@@ -61,15 +71,6 @@ __all__ = [
     "PCIeTxEqSimulator",
 ]
 
-
-BIT_COUNT = 512
-SPB = 32
-PLOT_BITS = 64
-EYE_UI = 2
-MAX_EYE_TRACES = 200
-REALTIME_EYE_TRACES = 60
-REALTIME_EYE_INTERVAL_MS = 50
-PAM4_SYMBOL_COUNT = 512
 # Density eye rendering is not implemented; line eye rendering is always used.
 
 np.random.seed(7)
