@@ -1,6 +1,6 @@
-# Baseline GUI & Build Smoke Test Checklist
+# Baseline GUI Smoke Test Checklist
 
-This document tracks the baseline GUI smoke test results and build verification for `PCIE-TX-EQ-Simulator` prior to any code refactoring.
+This document tracks the baseline GUI smoke test results for `PCIE-TX-EQ-Simulator` prior to any code refactoring.
 
 ## Environment Summary
 
@@ -8,7 +8,6 @@ This document tracks the baseline GUI smoke test results and build verification 
 - **Python Version**: Python 3.12.10
 - **PyQt5 Version**: 5.15.11
 - **PyQtGraph Version**: 0.14.0
-- **PyInstaller Version**: 6.18.0
 
 ---
 
@@ -33,10 +32,6 @@ This document tracks the baseline GUI smoke test results and build verification 
 | 15 | PAM4 Raw Eye | Displays 2 UI folded PAM4 raw eye diagram | Passed | Raw eye traces update in real time |
 | 16 | PAM4 Common `t_center` Eye | Displays aligned PAM4 eye diagram around t_center | Passed | Re-sliced eye traces render correctly |
 | 17 | Detail dialog | Clicking Detail opens numerical details window | Passed | Opens detail dialog without errors |
-| 18 | `build_exe.bat` execution | Script creates `.venv-build` and builds EXE using PyInstaller | Passed | Executable built cleanly |
-| 19 | Windows EXE launch | `dist\PCIe_TX_EQ_Simulator\PCIe_TX_EQ_Simulator.exe` runs | Passed | Launches from build folder |
-| 20 | No black console window | Executable runs as GUI without console window | Passed | `console=False` in spec file verified |
-| 21 | Packaged EXE operations | Packaged EXE supports presets, sliders, and eye diagrams | Passed | Full GUI features functional in standalone build |
 
 ---
 

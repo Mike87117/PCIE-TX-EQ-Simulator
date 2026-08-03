@@ -14,7 +14,7 @@ This project is for learning core concepts, not for compliance testing, preset c
 - **NRZ 3-Tap Manual DFE**: Symbol-rate decision feedback equalizer for post-cursor ISI cancellation.
 - **PCIe Gen6 PAM4 TX EQ**: 4-tap FIR equalization (`C-2 / C-1 / C0 / C+1`) with Presets Q0~Q9.
 - **PAM4 Raw Eye & Common `t_center` Eye**: Real-time 2 UI raw eye folding and common sampling phase alignment.
-- **Eye & Margin Metrics**: Approximate visual estimations for eye height, eye width, and DFE decision margins.
+- **Visualization Metrics**: Approximate visual estimations for NRZ eye opening/height, DFE decision margin, and PAM4 Upper/Middle/Lower eye openings.
 
 ---
 
@@ -50,7 +50,7 @@ Run automated baseline test suite:
 python -m pytest
 ```
 
-See [docs/BASELINE_SMOKE_TEST.md](file:///c:/Users/mikezeng/Desktop/Python/PCIE-TX-EQ-Simulator/docs/BASELINE_SMOKE_TEST.md) for the manual GUI smoke test checklist and verification results.
+See [Baseline Smoke Test](docs/BASELINE_SMOKE_TEST.md) for the manual GUI smoke test checklist and verification results.
 
 ---
 
@@ -65,27 +65,9 @@ See [docs/BASELINE_SMOKE_TEST.md](file:///c:/Users/mikezeng/Desktop/Python/PCIE-
 
 ---
 
-## Building Windows Executable
-
-This project provides a standalone Windows build script using PyInstaller onedir mode:
-
-```powershell
-.\build_exe.bat
-```
-
-The script will automatically create a local virtual environment (`.venv-build`), install dependencies, clean old artifacts, and compile the executable using `PCIe_TX_EQ_Simulator.spec`.
-
-Output directory:
-
-```powershell
-dist\PCIe_TX_EQ_Simulator\PCIe_TX_EQ_Simulator.exe
-```
-
----
-
 ## Educational Scope & Limitations
 
 - **Not a Compliance Tool**: This software does NOT perform PCI-SIG compliance certification, SigTest, or Seasim evaluation.
 - **Simplified Channel**: Channel loss is modeled using a simple first-order low-pass filter, not Touchstone S-parameter matrices or empirical loss curves.
 - **Teaching CTLE & DFE Models**: CTLE is a simplified high-frequency boost model, and DFE is a manual symbol-rate model (not adaptive LMS).
-- **Approximate Eye Metrics**: Eye height, width, and margin values are visual estimations.
+- **Approximate Visualization Metrics**: Eye height, eye margin, and PAM4 eye openings are visual approximations for learning. They do NOT represent compliance-grade Eye Width, Bathtub curves, BER/SER models, Density Eye, or formal PCIe reference receiver metrics.
