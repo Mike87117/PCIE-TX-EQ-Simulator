@@ -7,7 +7,7 @@ Locks in existing pre-refactor behavior of:
 
 import pytest
 import numpy as np
-from main import simple_channel
+from pcie_eq.channel import simple_channel
 
 
 def test_channel_alpha_1_identity():
