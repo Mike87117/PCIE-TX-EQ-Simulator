@@ -35,6 +35,8 @@ from pcie_eq.metrics import (
     calculate_pam4_eye_metrics,
     calculate_eye_metrics,
 )
+from pcie_eq.models import NrzSimulationConfig, Pam4SimulationConfig
+from pcie_eq.pipeline import run_simulation
 
 # =========================
 # Basic parameters
@@ -919,18 +921,6 @@ class PCIeTxEqSimulator(QMainWindow):
         )
         msg.exec_()
 
-    def get_rx_pipeline_results(self, tx_wave, ch_wave):
-        # Use a fixed CTLE alpha decoupled from channel loss model
-        fixed_ctle_alpha = 0.08
-        return run_rx_pipeline(
-            ch_wave, 
-            self.ctle_boost_current, 
-            fixed_ctle_alpha, 
-            [self.dfe_tap1_current, self.dfe_tap2_current, self.dfe_tap3_current], 
-            SPB, 
-            SPB // 2
-        )
-
     def get_target_rx_wave(self, rx_results):
         if "CTLE" in self.rx_view_mode:
             return rx_results["ctle_wave"]
@@ -954,37 +944,77 @@ class PCIeTxEqSimulator(QMainWindow):
         return False
 
     def update_nrz_realtime(self):
-        tx_sym = self.make_tx_symbols()
-        tx_wave = np.repeat(tx_sym, SPB)
-        ch_wave = simple_channel(tx_wave, alpha=self.channel_alpha_current)
-        rx_results = self.get_rx_pipeline_results(tx_wave, ch_wave)
-        rx_wave = self.get_target_rx_wave(rx_results)
+        config = NrzSimulationConfig(
+            symbols=self.symbols,
+            spb=SPB,
+            pre_db=self.pre_db_current,
+            de_db=self.de_db_current,
+            channel_alpha=self.channel_alpha_current,
+            ctle_gain=self.ctle_boost_current,
+            ctle_alpha=0.08,
+            dfe_taps=[self.dfe_tap1_current, self.dfe_tap2_current, self.dfe_tap3_current],
+            sampling_phase=SPB // 2,
+            max_traces=REALTIME_EYE_TRACES,
+            eye_ui=EYE_UI,
+        )
+        res = run_simulation(config)
+        rx_results = {
+            "ctle_wave": res.ctle_wave,
+            "dfe_input_samples": res.dfe_input_samples,
+            "dfe_corrected_samples": res.dfe_corrected_samples,
+            "dfe_decisions": res.dfe_decisions,
+        }
+        rx_wave = res.ctle_wave if ("CTLE" in self.rx_view_mode or "DFE" in self.rx_view_mode) else res.ch_wave
 
-        self.update_waveform(tx_wave, ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
+        self.update_waveform(res.tx_wave, res.ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
         
         if self.should_update_realtime_eye():
             self.update_eye_title()
             if "DFE" in self.rx_view_mode:
                 self.update_dfe_sample_plot(rx_results, max_symbols=REALTIME_EYE_TRACES)
+                self.eye_metrics = res.dfe_eye_metrics
+            elif "CTLE" in self.rx_view_mode:
+                self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
+                self.eye_metrics = res.ctle_eye_metrics
             else:
                 self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
-            self.update_eye_metrics(rx_wave, rx_results, max_traces=REALTIME_EYE_TRACES)
+                self.eye_metrics = res.channel_eye_metrics
             self.update_info()
 
     def redraw_all(self):
-        tx_sym = self.make_tx_symbols()
-        tx_wave = np.repeat(tx_sym, SPB)
-        ch_wave = simple_channel(tx_wave, alpha=self.channel_alpha_current)
-        rx_results = self.get_rx_pipeline_results(tx_wave, ch_wave)
-        rx_wave = self.get_target_rx_wave(rx_results)
+        config = NrzSimulationConfig(
+            symbols=self.symbols,
+            spb=SPB,
+            pre_db=self.pre_db_current,
+            de_db=self.de_db_current,
+            channel_alpha=self.channel_alpha_current,
+            ctle_gain=self.ctle_boost_current,
+            ctle_alpha=0.08,
+            dfe_taps=[self.dfe_tap1_current, self.dfe_tap2_current, self.dfe_tap3_current],
+            sampling_phase=SPB // 2,
+            max_traces=MAX_EYE_TRACES,
+            eye_ui=EYE_UI,
+        )
+        res = run_simulation(config)
+        rx_results = {
+            "ctle_wave": res.ctle_wave,
+            "dfe_input_samples": res.dfe_input_samples,
+            "dfe_corrected_samples": res.dfe_corrected_samples,
+            "dfe_decisions": res.dfe_decisions,
+        }
+        rx_wave = res.ctle_wave if ("CTLE" in self.rx_view_mode or "DFE" in self.rx_view_mode) else res.ch_wave
 
-        self.update_waveform(tx_wave, ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
+        self.update_waveform(res.tx_wave, res.ch_wave, rx_wave if "Channel" not in self.rx_view_mode else None)
         self.update_eye_title()
         if "DFE" in self.rx_view_mode:
             self.update_dfe_sample_plot(rx_results, max_symbols=MAX_EYE_TRACES)
+            self.eye_metrics = res.dfe_eye_metrics
+        elif "CTLE" in self.rx_view_mode:
+            self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
+            self.eye_metrics = res.ctle_eye_metrics
         else:
             self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
-        self.update_eye_metrics(rx_wave, rx_results, max_traces=MAX_EYE_TRACES)
+            self.eye_metrics = res.channel_eye_metrics
         self.update_info()
 
     def full_refresh(self):
@@ -1179,23 +1209,24 @@ class PCIeTxEqSimulator(QMainWindow):
             self.pam4_sync_ui_from_state(update_edits=True)
             self.pam4_redraw_all()
 
-    def pam4_make_tx_symbols(self):
-        tx_sym, _ = gen6_pam4_fir(
-            self.pam4_symbols,
-            self.pam4_cm2_current,
-            self.pam4_cm1_current,
-            self.pam4_cp1_current,
-        )
-        return tx_sym
-
     def pam4_redraw_all(self):
-        tx_sym = self.pam4_make_tx_symbols()
-        tx_wave = np.repeat(tx_sym, SPB)
-        ch_wave = simple_channel(tx_wave, alpha=self.pam4_alpha_current)
+        config = Pam4SimulationConfig(
+            symbols=self.pam4_symbols,
+            spb=SPB,
+            cm2=self.pam4_cm2_current,
+            cm1=self.pam4_cm1_current,
+            cp1=self.pam4_cp1_current,
+            channel_alpha=self.pam4_alpha_current,
+            old_phase=self.pam4_t_center_phase,
+            eye_ui=EYE_UI,
+        )
+        res = run_simulation(config)
+        self.pam4_t_center_phase = res.t_center_phase
+        self.pam4_t_center_score = res.t_center_score
+        self.pam4_eye_metrics = res.pam4_eye_metrics
 
-        self.update_pam4_waveform(tx_wave, ch_wave)
-        self.update_pam4_eye_metrics(ch_wave)
-        self.update_pam4_eye(ch_wave)
+        self.update_pam4_waveform(res.tx_wave, res.ch_wave)
+        self.update_pam4_eye(res.ch_wave)
         self.update_pam4_info()
 
     def update_pam4_waveform(self, tx_wave, ch_wave):
@@ -1360,14 +1391,6 @@ class PCIeTxEqSimulator(QMainWindow):
         set_item(1, 1, "U/M/L:", f"{self.pam4_eye_metrics['upper_eye']:.3f} / {self.pam4_eye_metrics['middle_eye']:.3f} / {self.pam4_eye_metrics['lower_eye']:.3f}")
         set_item(1, 2, "Min Eye:", f"{self.pam4_eye_metrics['minimum_eye']:.4f}")
         set_item(1, 3, "Spread:", f"{self.pam4_eye_metrics['center_spread']:.4f}")
-
-    def make_tx_symbols(self):
-        tx_sym = tx_eq_levels(
-            self.symbols,
-            self.pre_db_current,
-            self.de_db_current,
-        )
-        return tx_sym
 
     def update_waveform(self, tx_wave, ch_wave, rx_wave=None):
         length = PLOT_BITS * SPB
