@@ -122,64 +122,76 @@ def test_nrz_tx_fir_indexing_and_tap_sign():
     np.testing.assert_allclose(y, y_expected, rtol=1e-6, atol=1e-6)
 
 
-def test_nrz_tx_eq_levels_patterns():
+# Preshoot and deemphasis levels used across parametrized level pattern tests
+PRESHOOT_DB_TEST = 2.5
+DEEMPH_DB_TEST = -3.5
+VA_TEST = 1.0
+VB_TEST = 10 ** (DEEMPH_DB_TEST / 20.0)
+VC_TEST = VB_TEST * (10 ** (PRESHOOT_DB_TEST / 20.0))
+
+
+@pytest.mark.parametrize(
+    ("pattern_name", "symbols", "expected_levels"),
+    [
+        (
+            "0000",
+            np.array([-1.0, -1.0, -1.0, -1.0]),
+            np.array([-VB_TEST, -VB_TEST, -VB_TEST, -VB_TEST]),
+        ),
+        (
+            "0001",
+            np.array([-1.0, -1.0, -1.0, 1.0]),
+            np.array([-VB_TEST, -VB_TEST, -VC_TEST, VA_TEST]),
+        ),
+        (
+            "0011",
+            np.array([-1.0, -1.0, 1.0, 1.0]),
+            np.array([-VB_TEST, -VC_TEST, VA_TEST, VB_TEST]),
+        ),
+        (
+            "0111",
+            np.array([-1.0, 1.0, 1.0, 1.0]),
+            np.array([-VC_TEST, VA_TEST, VB_TEST, VB_TEST]),
+        ),
+        (
+            "1010",
+            np.array([1.0, -1.0, 1.0, -1.0]),
+            np.array([VC_TEST, -VA_TEST, VA_TEST, -VA_TEST]),
+        ),
+        (
+            "1110",
+            np.array([1.0, 1.0, 1.0, -1.0]),
+            np.array([VB_TEST, VB_TEST, VC_TEST, -VA_TEST]),
+        ),
+        (
+            "1000",
+            np.array([1.0, -1.0, -1.0, -1.0]),
+            np.array([VC_TEST, -VA_TEST, -VB_TEST, -VB_TEST]),
+        ),
+    ],
+)
+def test_nrz_tx_eq_level_pattern_vectors(pattern_name, symbols, expected_levels):
     """
-    Verify tx_eq_levels with fixed bit patterns covering required transitions:
+    Verify tx_eq_levels with explicit expected output vectors for all 7 required patterns:
     0000, 0001, 0011, 0111, 1010, 1110, 1000.
 
     Verifies:
-    1. No EQ output behavior when preshoot=0, deemph=0 (va=1, vb=1, vc=1).
-    2. Va applied on first bit after transition.
-    3. Vb applied on repeated / de-emphasized bit.
-    4. Vc applied on last repeated bit before transition.
-    5. Preshoot and De-emphasis are not swapped.
-    6. Output length equals input length.
-    7. Input array is not modified in place.
+    1. No EQ identity behavior when preshoot=0, deemph=0.
+    2. Exact level assignment (Va, Vb, Vc) for every symbol position.
+    3. Preshoot and De-emphasis are not swapped.
+    4. Output length equals input length.
+    5. Input array is not modified in place.
     """
-    patterns = {
-        "0000": np.array([-1.0, -1.0, -1.0, -1.0]),
-        "0001": np.array([-1.0, -1.0, -1.0,  1.0]),
-        "0011": np.array([-1.0, -1.0,  1.0,  1.0]),
-        "0111": np.array([-1.0,  1.0,  1.0,  1.0]),
-        "1010": np.array([ 1.0, -1.0,  1.0, -1.0]),
-        "1110": np.array([ 1.0,  1.0,  1.0, -1.0]),
-        "1000": np.array([ 1.0, -1.0, -1.0, -1.0]),
-    }
+    symbols_copy = symbols.copy()
 
-    preshoot_db = 2.5
-    deemph_db = -3.5
-    va_exp = 1.0
-    vb_exp = 10 ** (deemph_db / 20.0)
-    vc_exp = vb_exp * (10 ** (preshoot_db / 20.0))
+    # 1. No EQ verification (preshoot=0, deemph=0) -> output equals input symbols
+    y_no_eq = tx_eq_levels(symbols, preshoot_db=0.0, deemph_db=0.0)
+    assert len(y_no_eq) == len(symbols)
+    np.testing.assert_array_equal(symbols, symbols_copy)
+    np.testing.assert_allclose(y_no_eq, symbols, rtol=1e-7, atol=1e-7)
 
-    for p_name, p_symbols in patterns.items():
-        p_copy = p_symbols.copy()
-        
-        # No EQ verification
-        y_no_eq = tx_eq_levels(p_symbols, preshoot_db=0.0, deemph_db=0.0)
-        assert len(y_no_eq) == len(p_symbols)
-        np.testing.assert_array_equal(p_symbols, p_copy)
-        np.testing.assert_allclose(y_no_eq, p_symbols, rtol=1e-7, atol=1e-7)
-
-        # EQ active verification
-        y_eq = tx_eq_levels(p_symbols, preshoot_db=preshoot_db, deemph_db=deemph_db)
-        assert len(y_eq) == len(p_symbols)
-        np.testing.assert_array_equal(p_symbols, p_copy)
-
-    # Detailed spot checks on 0001 pattern [-1, -1, -1, 1]:
-    # idx 0 (-1): now=-1, prev=-1, next=-1 -> repeated, not last -> vb
-    # idx 1 (-1): now=-1, prev=-1, next=-1 -> repeated, not last -> vb
-    # idx 2 (-1): now=-1, prev=-1, next=1  -> repeated, last before trans -> vc
-    # idx 3 (1):  now=1,  prev=-1, next=1  -> first after trans -> va
-    y_0001 = tx_eq_levels(patterns["0001"], preshoot_db=preshoot_db, deemph_db=deemph_db)
-    assert y_0001[0] == pytest.approx(-1.0 * vb_exp, abs=1e-6)
-    assert y_0001[1] == pytest.approx(-1.0 * vb_exp, abs=1e-6)
-    assert y_0001[2] == pytest.approx(-1.0 * vc_exp, abs=1e-6)
-    assert y_0001[3] == pytest.approx( 1.0 * va_exp, abs=1e-6)
-
-    # Detailed spot checks on 1010 pattern [1, -1, 1, -1]:
-    # idx 1 (-1): now=-1, prev=1, next=1  -> first after trans -> va
-    # idx 2 (1):  now=1,  prev=-1, next=-1 -> first after trans -> va
-    y_1010 = tx_eq_levels(patterns["1010"], preshoot_db=preshoot_db, deemph_db=deemph_db)
-    assert y_1010[1] == pytest.approx(-1.0 * va_exp, abs=1e-6)
-    assert y_1010[2] == pytest.approx( 1.0 * va_exp, abs=1e-6)
+    # 2. EQ active verification with explicit expected vector
+    y_eq = tx_eq_levels(symbols, preshoot_db=PRESHOOT_DB_TEST, deemph_db=DEEMPH_DB_TEST)
+    assert len(y_eq) == len(symbols)
+    np.testing.assert_array_equal(symbols, symbols_copy)
+    np.testing.assert_allclose(y_eq, expected_levels, rtol=1e-6, atol=1e-6)
