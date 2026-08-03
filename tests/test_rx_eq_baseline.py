@@ -9,11 +9,11 @@ Locks in existing pre-refactor behavior of:
 
 import pytest
 import numpy as np
-from main import (
+from pcie_eq.channel import simple_channel
+from pcie_eq.rx_eq import (
     apply_ctle,
     apply_dfe,
     run_rx_pipeline,
-    simple_channel,
 )
 
 
@@ -27,6 +27,7 @@ def test_ctle_gain_zero_identity():
 
     ctle_wave = apply_ctle(wave, gain=0.0, alpha=0.08)
 
+    assert ctle_wave is wave
     assert len(ctle_wave) == len(wave)
     np.testing.assert_array_equal(wave, wave_copy)
     np.testing.assert_allclose(ctle_wave, wave, rtol=1e-7, atol=1e-7)
@@ -177,3 +178,19 @@ def test_run_rx_pipeline_integrity():
     assert len(pipeline_res["dfe_input_samples"]) == num_symbols
     assert len(pipeline_res["dfe_corrected_samples"]) == num_symbols
     assert len(pipeline_res["dfe_decisions"]) == num_symbols
+
+
+def test_rx_eq_identity_and_edge_cases():
+    """
+    Verify CTLE gain <= 0 identity, DFE val == 0 decision = +1.0, and pipeline object identity.
+    """
+    ch_wave = np.array([0.0, 0.0, 0.0, 0.0], dtype=float)
+    res_zero = run_rx_pipeline(ch_wave, ctle_gain=0.0, ctle_alpha=0.08, dfe_taps=[0.0], spb=1, sampling_phase=0)
+
+    assert res_zero["ch_wave"] is ch_wave
+    assert res_zero["ctle_wave"] is ch_wave
+
+    # Verify DFE decision when val == 0 is +1.0
+    _, _, decisions = apply_dfe(np.array([0.0]), taps=[0.0], spb=1, sampling_phase=0)
+    assert decisions[0] == 1.0
+
