@@ -10,7 +10,7 @@ Locks in existing pre-refactor behavior of:
 
 import pytest
 import numpy as np
-from main import (
+from pcie_eq.tx_eq import (
     PCIE_GEN6_PRESET_TAP_TABLE,
     constrain_gen6_taps,
     calc_gen6_levels,
