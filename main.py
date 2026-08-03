@@ -29,6 +29,12 @@ from pcie_eq.rx_eq import (
     apply_dfe,
     run_rx_pipeline,
 )
+from pcie_eq.metrics import (
+    calc_pam4_eye_openings_at_phase,
+    estimate_pam4_common_t_center_phase,
+    calculate_pam4_eye_metrics,
+    calculate_eye_metrics,
+)
 
 # =========================
 # Basic parameters
@@ -1275,131 +1281,20 @@ class PCIeTxEqSimulator(QMainWindow):
         self.pam4_eye_plot.setYRange(-1.4, 1.4)
 
     def calc_pam4_eye_openings_at_phase(self, wave, phase):
-        invalid = {
-            "valid": False,
-            "upper_eye": 0.0,
-            "middle_eye": 0.0,
-            "lower_eye": 0.0,
-            "minimum_eye": 0.0,
-            "center_spread": 0.0,
-            "sample_count": 0,
-        }
-
-        start = 20 * SPB
-        phase = int(np.clip(phase, 0, SPB - 1))
-        center_positions = np.arange(start + phase, len(wave), SPB, dtype=int)
-        center_positions = center_positions[
-            (center_positions >= 0) & (center_positions < len(wave))
-        ]
-        if center_positions.size < 20:
-            return invalid
-
-        center_samples = wave[center_positions]
-        symbol_indices = center_positions // SPB
-        valid_mask = symbol_indices < len(self.pam4_symbols)
-        if np.count_nonzero(valid_mask) < 20:
-            return invalid
-
-        center_positions = center_positions[valid_mask]
-        symbol_indices = symbol_indices[valid_mask]
-        center_samples = wave[center_positions]
-        ref_symbols = self.pam4_symbols[symbol_indices]
-
-        # Group samples by transmitted PAM4 symbol instead of measured voltage.
-        # Voltage-threshold grouping can misclassify samples after TX EQ and channel ISI.
-        lower_band = center_samples[np.isclose(ref_symbols, -1.0)]
-        mid_low_band = center_samples[np.isclose(ref_symbols, -1.0 / 3.0)]
-        mid_high_band = center_samples[np.isclose(ref_symbols, 1.0 / 3.0)]
-        upper_band = center_samples[np.isclose(ref_symbols, 1.0)]
-
-        if min(
-            lower_band.size,
-            mid_low_band.size,
-            mid_high_band.size,
-            upper_band.size,
-        ) < 5:
-            return invalid
-
-        lower_eye = float(np.percentile(mid_low_band, 5) - np.percentile(lower_band, 95))
-        middle_eye = float(np.percentile(mid_high_band, 5) - np.percentile(mid_low_band, 95))
-        upper_eye = float(np.percentile(upper_band, 5) - np.percentile(mid_high_band, 95))
-        minimum_eye = min(upper_eye, middle_eye, lower_eye)
-        center_spread = float(np.max(center_samples) - np.min(center_samples))
-
-        return {
-            "valid": True,
-            "upper_eye": upper_eye,
-            "middle_eye": middle_eye,
-            "lower_eye": lower_eye,
-            "minimum_eye": minimum_eye,
-            "center_spread": center_spread,
-            "sample_count": int(center_samples.size),
-        }
+        return calc_pam4_eye_openings_at_phase(wave, self.pam4_symbols, phase, spb=SPB)
 
     def estimate_pam4_common_t_center_phase(self, wave):
-        phase_update_margin = 0.002
-        fallback = self.calc_pam4_eye_openings_at_phase(wave, SPB // 2)
-        best_phase = SPB // 2
-        best_openings = fallback if fallback["valid"] else {
-            "valid": False,
-            "upper_eye": 0.0,
-            "middle_eye": 0.0,
-            "lower_eye": 0.0,
-            "minimum_eye": 0.0,
-            "center_spread": 0.0,
-            "sample_count": 0,
-        }
-        best_score = best_openings["minimum_eye"] if best_openings["valid"] else -np.inf
-
-        for phase in range(SPB):
-            openings = self.calc_pam4_eye_openings_at_phase(wave, phase)
-            if not openings["valid"]:
-                continue
-
-            score = openings["minimum_eye"]
-            if score > best_score + 1e-6:
-                best_phase = phase
-                best_openings = openings
-                best_score = score
-            elif abs(score - best_score) <= 1e-6:
-                if abs(phase - (SPB // 2)) < abs(best_phase - (SPB // 2)):
-                    best_phase = phase
-                    best_openings = openings
-                    best_score = score
-
-        old_phase = int(np.clip(self.pam4_t_center_phase, 0, SPB - 1))
-        old_openings = self.calc_pam4_eye_openings_at_phase(wave, old_phase)
-        if old_openings["valid"]:
-            old_score = old_openings["minimum_eye"]
-            if best_score <= old_score + phase_update_margin:
-                return old_phase, old_openings
-
-        if not best_openings["valid"]:
-            return SPB // 2, best_openings
-        return best_phase, best_openings
+        return estimate_pam4_common_t_center_phase(
+            wave, self.pam4_symbols, old_phase=self.pam4_t_center_phase, spb=SPB
+        )
 
     def update_pam4_eye_metrics(self, wave):
-        best_phase, best_openings = self.estimate_pam4_common_t_center_phase(wave)
+        best_phase, best_score, metrics = calculate_pam4_eye_metrics(
+            wave, self.pam4_symbols, old_phase=self.pam4_t_center_phase, spb=SPB
+        )
         self.pam4_t_center_phase = int(best_phase)
-        self.pam4_t_center_score = float(best_openings["minimum_eye"])
-
-        if not best_openings["valid"]:
-            self.pam4_eye_metrics = {
-                "upper_eye": 0.0,
-                "middle_eye": 0.0,
-                "lower_eye": 0.0,
-                "minimum_eye": 0.0,
-                "center_spread": 0.0,
-            }
-            return
-
-        self.pam4_eye_metrics = {
-            "upper_eye": best_openings["upper_eye"],
-            "middle_eye": best_openings["middle_eye"],
-            "lower_eye": best_openings["lower_eye"],
-            "minimum_eye": best_openings["minimum_eye"],
-            "center_spread": best_openings["center_spread"],
-        }
+        self.pam4_t_center_score = float(best_score)
+        self.pam4_eye_metrics = metrics
 
     def update_pam4_info(self):
         (
@@ -1582,95 +1477,16 @@ class PCIeTxEqSimulator(QMainWindow):
         self.eye_plot.setYRange(-ymax, ymax)
 
     def update_eye_metrics(self, wave, rx_results=None, max_traces=MAX_EYE_TRACES):
-        if rx_results is not None and "DFE" in self.rx_view_mode:
-            # For DFE, calculate metrics based on corrected symbol-rate samples vs ground truth
-            samples = rx_results["dfe_corrected_samples"]
-            decisions = rx_results["dfe_decisions"]
-            
-            ref_len = min(len(samples), len(self.symbols))
-            reference = self.symbols[:ref_len]
-            samples_aligned = samples[:ref_len]
-            decisions_aligned = decisions[:ref_len]
-            
-            warmup_symbols = 20
-            if ref_len > warmup_symbols:
-                reference = reference[warmup_symbols:]
-                samples_aligned = samples_aligned[warmup_symbols:]
-                decisions_aligned = decisions_aligned[warmup_symbols:]
-            else:
-                reference = np.array([])
-                samples_aligned = np.array([])
-                decisions_aligned = np.array([])
-            
-            if len(samples_aligned) > 0:
-                signed_margin = samples_aligned * reference
-                error_count = int(np.sum(decisions_aligned != reference))
-                margin_5pct = float(np.percentile(signed_margin, 5))
-                eye_height = margin_5pct * 2.0
-                eye_max = float(np.max(samples_aligned))
-                eye_min = float(np.min(samples_aligned))
-                center_spread = float(np.max(samples_aligned) - np.min(samples_aligned))
-            else:
-                margin_5pct = 0.0
-                eye_height = 0.0
-                error_count = 0
-                eye_max = 0.0
-                eye_min = 0.0
-                center_spread = 0.0
-                
-            self.eye_metrics = {
-                "eye_height": eye_height,
-                "margin_5pct": margin_5pct,
-                "error_count": error_count,
-                "eye_max": eye_max,
-                "eye_min": eye_min,
-                "center_spread": center_spread,
-            }
-            return
-
-        seg_len = EYE_UI * SPB
-        start = 20 * SPB
-        trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
-        if trace_starts.size == 0:
-            self.eye_metrics = {
-                "eye_height": 0.0,
-                "margin_5pct": 0.0,
-                "error_count": 0,
-                "eye_max": 0.0,
-                "eye_min": 0.0,
-                "center_spread": 0.0,
-            }
-            return
-
-        if trace_starts.size > max_traces:
-            idx = np.linspace(0, trace_starts.size - 1, max_traces, dtype=int)
-            sampled_starts = trace_starts[idx]
-        else:
-            sampled_starts = trace_starts
-
-        segs = np.array([wave[s:s + seg_len] for s in sampled_starts], dtype=float)
-        eye_max = float(np.max(segs))
-        eye_min = float(np.min(segs))
-        eye_height = eye_max - eye_min
-
-        center_idx = seg_len // 2
-        center_samples = segs[:, center_idx]
-        center_spread = float(np.max(center_samples) - np.min(center_samples))
-        upper = center_samples[center_samples >= 0]
-        lower = center_samples[center_samples < 0]
-        if upper.size > 0 and lower.size > 0:
-            eye_height = float(np.percentile(upper, 5) - np.percentile(lower, 95))
-        else:
-            eye_height = 0.0
-
-        self.eye_metrics = {
-            "eye_height": eye_height,
-            "margin_5pct": eye_height / 2.0,
-            "error_count": 0,
-            "eye_max": eye_max,
-            "eye_min": eye_min,
-            "center_spread": center_spread,
-        }
+        is_dfe = rx_results is not None and "DFE" in self.rx_view_mode
+        self.eye_metrics = calculate_eye_metrics(
+            wave,
+            rx_results=rx_results,
+            is_dfe=is_dfe,
+            reference_symbols=self.symbols,
+            max_traces=max_traces,
+            eye_ui=EYE_UI,
+            spb=SPB,
+        )
 
     def update_info(self):
         c0, _, _, _, _, _ = calc_levels(self.cm1_current, self.cp1_current)
