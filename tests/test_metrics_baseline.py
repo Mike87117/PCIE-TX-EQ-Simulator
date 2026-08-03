@@ -11,6 +11,14 @@ Locks in existing pre-refactor behavior of:
 import pytest
 import numpy as np
 from main import PCIeTxEqSimulator, SPB, MAX_EYE_TRACES
+from pcie_eq.metrics import (
+    calc_pam4_eye_openings_at_phase as core_calc_pam4_eye_openings_at_phase,
+    estimate_pam4_common_t_center_phase as core_estimate_pam4_common_t_center_phase,
+    calculate_pam4_eye_metrics,
+    calculate_dfe_eye_metrics,
+    calculate_nrz_eye_metrics,
+    calculate_eye_metrics,
+)
 
 
 class DummyMetricsHarness:
