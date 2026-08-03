@@ -45,6 +45,7 @@ from pcie_eq.metrics import (
 from pcie_eq.models import NrzSimulationConfig, Pam4SimulationConfig
 from pcie_eq.pipeline import run_simulation
 from pcie_eq.gui.nrz_tab import build_nrz_tab
+from pcie_eq.gui.pam4_tab import build_pam4_tab
 
 __all__ = [
     "BIT_COUNT",
@@ -208,133 +209,7 @@ class PCIeTxEqSimulator(QMainWindow):
         self.setCentralWidget(root)
 
     def init_pam4_tab(self):
-        layout = QVBoxLayout(self.pam4_tab)
-
-        self.pam4_wave_plot = pg.PlotWidget(title="PCIe Gen6 PAM4 TX EQ Waveform")
-        self.pam4_wave_plot.setLabel("bottom", "Symbol / UI")
-        self.pam4_wave_plot.setLabel("left", "Normalized Level")
-        self.pam4_wave_plot.showGrid(x=True, y=True)
-
-        self.pam4_eye_plot = pg.PlotWidget(title="PAM4 Eye Diagram after Simplified Channel")
-        self.pam4_eye_plot.setLabel("bottom", "UI")
-        self.pam4_eye_plot.setLabel("left", "Normalized Level")
-        self.pam4_eye_plot.showGrid(x=True, y=True)
-
-        self.pam4_tx_curve = self.pam4_wave_plot.plot(pen=pg.mkPen(width=2))
-        self.pam4_ch_curve = self.pam4_wave_plot.plot(pen=pg.mkPen(width=2, style=Qt.DashLine))
-        self.pam4_eye_curve = self.pam4_eye_plot.plot(pen=pg.mkPen(width=1))
-        self.pam4_tx_curve.setDownsampling(auto=True)
-        self.pam4_ch_curve.setDownsampling(auto=True)
-        self.pam4_tx_curve.setClipToView(True)
-        self.pam4_ch_curve.setClipToView(True)
-
-        layout.addWidget(self.pam4_wave_plot, stretch=4)
-        layout.addWidget(self.pam4_eye_plot, stretch=3)
-
-        self.pam4_status_panel = QFrame()
-        self.pam4_status_panel.setMinimumHeight(90)
-        self.pam4_status_panel.setMaximumHeight(110)
-        self.pam4_status_panel.setStyleSheet("""
-            QFrame {
-                border: 1px solid #c0c0c0;
-                border-radius: 4px;
-                background-color: #f9f9f9;
-            }
-        """)
-        
-        self.pam4_status_layout = QGridLayout(self.pam4_status_panel)
-        self.pam4_status_layout.setContentsMargins(8, 4, 8, 4)
-        self.pam4_status_layout.setSpacing(4)
-        self.pam4_status_items = {}
-        
-        for r in range(2):
-            for c in range(4):
-                container = QWidget()
-                hlay = QHBoxLayout(container)
-                hlay.setContentsMargins(0, 0, 0, 0)
-                hlay.setSpacing(4)
-                lbl = QLabel()
-                lbl.setStyleSheet("font-size: 13px; color: #555; border: none; background: transparent;")
-                val = QLabel()
-                val.setStyleSheet("font-size: 16px; font-weight: bold; color: #111; border: none; background: transparent;")
-                hlay.addWidget(lbl)
-                hlay.addWidget(val)
-                hlay.addStretch()
-                self.pam4_status_layout.addWidget(container, r, c)
-                self.pam4_status_items[(r, c)] = (lbl, val)
-                
-        layout.addWidget(self.pam4_status_panel)
-
-        control_layout = QHBoxLayout()
-        preset_label = QLabel("Gen6 Preset")
-        preset_label.setFixedWidth(120)
-        self.gen6_preset_combo = QComboBox()
-        self.gen6_preset_combo.addItem("Custom")
-        for q in range(10):
-            self.gen6_preset_combo.addItem(f"Q{q}")
-        self.gen6_preset_combo.currentIndexChanged.connect(self.on_gen6_preset_change)
-        control_layout.addWidget(preset_label)
-        control_layout.addWidget(self.gen6_preset_combo)
-
-        eye_mode_label = QLabel("PAM4 Eye Mode")
-        eye_mode_label.setFixedWidth(120)
-        self.pam4_eye_mode_combo = QComboBox()
-        self.pam4_eye_mode_combo.addItem("Raw Eye")
-        self.pam4_eye_mode_combo.addItem("Common t_center Eye")
-        self.pam4_eye_mode_combo.currentIndexChanged.connect(self.on_pam4_eye_mode_change)
-        control_layout.addWidget(eye_mode_label)
-        control_layout.addWidget(self.pam4_eye_mode_combo)
-
-        self.btn_pam4_new_wave = QPushButton("New PAM4 Wave")
-        self.btn_pam4_new_wave.clicked.connect(self.on_pam4_generate_new_waveform)
-        self.btn_pam4_reset_eq = QPushButton("Reset EQ")
-        self.btn_pam4_reset_eq.clicked.connect(self.on_pam4_reset_eq)
-        self.btn_pam4_reset_channel = QPushButton("Reset CH")
-        self.btn_pam4_reset_channel.clicked.connect(self.on_pam4_reset_channel)
-        self.btn_pam4_detail = QPushButton("Detail")
-        self.btn_pam4_detail.clicked.connect(self.on_toggle_pam4_detail)
-        for btn in (
-            self.btn_pam4_new_wave,
-            self.btn_pam4_reset_eq,
-            self.btn_pam4_reset_channel,
-            self.btn_pam4_detail,
-        ):
-            btn.setFixedHeight(24)
-            control_layout.addWidget(btn)
-        layout.addLayout(control_layout)
-
-        self.pam4_slider_cm2 = self.make_slider(
-            "C-2", 0, 250, int(self.pam4_cm2_current * 1000)
-        )
-        self.pam4_slider_cm1 = self.make_slider(
-            "C-1", -300, 0, int(self.pam4_cm1_current * 1000)
-        )
-        self.pam4_slider_cp1 = self.make_slider(
-            "C+1", -250, 0, int(self.pam4_cp1_current * 1000)
-        )
-        self.pam4_slider_alpha = self.make_slider(
-            "PAM4 Low-pass Alpha", 1, 300, int(self.pam4_alpha_current * 1000)
-        )
-
-        self.pam4_slider_cm2["edit"].setValidator(QDoubleValidator(0.0, 0.25, 4, self))
-        self.pam4_slider_cm1["edit"].setValidator(QDoubleValidator(-0.30, 0.0, 4, self))
-        self.pam4_slider_cp1["edit"].setValidator(QDoubleValidator(-0.25, 0.0, 4, self))
-        self.pam4_slider_alpha["edit"].setValidator(QDoubleValidator(0.001, 0.3, 3, self))
-
-        layout.addLayout(self.pam4_slider_cm2["layout"])
-        layout.addLayout(self.pam4_slider_cm1["layout"])
-        layout.addLayout(self.pam4_slider_cp1["layout"])
-        layout.addLayout(self.pam4_slider_alpha["layout"])
-
-        self.pam4_slider_cm2["slider"].valueChanged.connect(self.on_pam4_slider_change)
-        self.pam4_slider_cm1["slider"].valueChanged.connect(self.on_pam4_slider_change)
-        self.pam4_slider_cp1["slider"].valueChanged.connect(self.on_pam4_slider_change)
-        self.pam4_slider_alpha["slider"].valueChanged.connect(self.on_pam4_slider_change)
-
-        self.pam4_slider_cm2["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("cm2"))
-        self.pam4_slider_cm1["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("cm1"))
-        self.pam4_slider_cp1["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("cp1"))
-        self.pam4_slider_alpha["edit"].editingFinished.connect(lambda: self.on_pam4_edit_change("alpha"))
+        build_pam4_tab(self)
 
     def make_slider(self, name, minimum, maximum, value):
         layout = QHBoxLayout()
