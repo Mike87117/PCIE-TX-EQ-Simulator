@@ -16,15 +16,13 @@ class NrzSimulationConfig:
     """Core parameters for NRZ signal simulation pipeline."""
     symbols: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     spb: int = 32
-    cm1: float = 0.0
-    cp1: float = 0.0
-    pre_db: float = 0.0
-    de_db: float = 0.0
+    pre_db: float = 1.5
+    de_db: float = -3.5
     channel_alpha: float = 0.08
     ctle_gain: float = 0.0
     ctle_alpha: float = 0.08
-    dfe_taps: list = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    sampling_phase: int = 0
+    dfe_taps: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    sampling_phase: int = 16
     max_traces: int = 200
     eye_ui: int = 2
 
@@ -52,7 +50,9 @@ class NrzSimulationResult:
     dfe_input_samples: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     dfe_corrected_samples: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     dfe_decisions: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
-    eye_metrics: dict = field(default_factory=dict)
+    channel_eye_metrics: dict[str, float | int] = field(default_factory=dict)
+    ctle_eye_metrics: dict[str, float | int] = field(default_factory=dict)
+    dfe_eye_metrics: dict[str, float | int] = field(default_factory=dict)
 
 
 @dataclass
@@ -63,4 +63,4 @@ class Pam4SimulationResult:
     ch_wave: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     t_center_phase: int = 16
     t_center_score: float = 0.0
-    pam4_eye_metrics: dict = field(default_factory=dict)
+    pam4_eye_metrics: dict[str, float] = field(default_factory=dict)
