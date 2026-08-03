@@ -921,18 +921,6 @@ class PCIeTxEqSimulator(QMainWindow):
         )
         msg.exec_()
 
-    def get_rx_pipeline_results(self, tx_wave, ch_wave):
-        # Use a fixed CTLE alpha decoupled from channel loss model
-        fixed_ctle_alpha = 0.08
-        return run_rx_pipeline(
-            ch_wave, 
-            self.ctle_boost_current, 
-            fixed_ctle_alpha, 
-            [self.dfe_tap1_current, self.dfe_tap2_current, self.dfe_tap3_current], 
-            SPB, 
-            SPB // 2
-        )
-
     def get_target_rx_wave(self, rx_results):
         if "CTLE" in self.rx_view_mode:
             return rx_results["ctle_wave"]
@@ -965,7 +953,7 @@ class PCIeTxEqSimulator(QMainWindow):
             ctle_gain=self.ctle_boost_current,
             ctle_alpha=0.08,
             dfe_taps=[self.dfe_tap1_current, self.dfe_tap2_current, self.dfe_tap3_current],
-            sampling_phase=int(self.dfe_phase_current),
+            sampling_phase=SPB // 2,
             max_traces=REALTIME_EYE_TRACES,
             eye_ui=EYE_UI,
         )
@@ -1003,7 +991,7 @@ class PCIeTxEqSimulator(QMainWindow):
             ctle_gain=self.ctle_boost_current,
             ctle_alpha=0.08,
             dfe_taps=[self.dfe_tap1_current, self.dfe_tap2_current, self.dfe_tap3_current],
-            sampling_phase=int(self.dfe_phase_current),
+            sampling_phase=SPB // 2,
             max_traces=MAX_EYE_TRACES,
             eye_ui=EYE_UI,
         )
@@ -1221,15 +1209,6 @@ class PCIeTxEqSimulator(QMainWindow):
             self.pam4_sync_ui_from_state(update_edits=True)
             self.pam4_redraw_all()
 
-    def pam4_make_tx_symbols(self):
-        tx_sym, _ = gen6_pam4_fir(
-            self.pam4_symbols,
-            self.pam4_cm2_current,
-            self.pam4_cm1_current,
-            self.pam4_cp1_current,
-        )
-        return tx_sym
-
     def pam4_redraw_all(self):
         config = Pam4SimulationConfig(
             symbols=self.pam4_symbols,
@@ -1412,14 +1391,6 @@ class PCIeTxEqSimulator(QMainWindow):
         set_item(1, 1, "U/M/L:", f"{self.pam4_eye_metrics['upper_eye']:.3f} / {self.pam4_eye_metrics['middle_eye']:.3f} / {self.pam4_eye_metrics['lower_eye']:.3f}")
         set_item(1, 2, "Min Eye:", f"{self.pam4_eye_metrics['minimum_eye']:.4f}")
         set_item(1, 3, "Spread:", f"{self.pam4_eye_metrics['center_spread']:.4f}")
-
-    def make_tx_symbols(self):
-        tx_sym = tx_eq_levels(
-            self.symbols,
-            self.pre_db_current,
-            self.de_db_current,
-        )
-        return tx_sym
 
     def update_waveform(self, tx_wave, ch_wave, rx_wave=None):
         length = PLOT_BITS * SPB
