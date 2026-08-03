@@ -41,7 +41,6 @@ PCIE-TX-EQ-Simulator 的定位是：
 - PAM4 Raw Eye 與 Common `t_center` Eye。
 - NRZ／PAM4 波形與近似 Eye metrics。
 - PyQt5 GUI 與 PyQtGraph 即時顯示。
-- Windows PyInstaller onedir 發布流程。
 
 目前主要限制：
 
@@ -99,6 +98,7 @@ Pattern
 - 替代正式示波器、BERT 或 Channel Compliance Software。
 - 宣稱模擬 preset、BER、SNDR、TDECQ 或 receiver tolerance 結果具有認證效力。
 - 在基礎架構尚未穩定前直接擴充 PCIe Gen7 全功能。
+- 目前開發階段不處理 Windows EXE、PyInstaller、Installer、Portable package、發布封裝或防毒誤判。若未來需要恢復打包或安裝流程，必須另立產品決策、Issue 與驗收標準，不得視為目前 Roadmap 的既定工作。
 
 ---
 
@@ -139,7 +139,7 @@ Pattern
 | Phase 4 | PAM4 RXEQ | AGC、CTLE、FFE、DFE、3 thresholds、SER | P0 |
 | Phase 5 | Auto Equalization | Sweep、Auto adaptation、最佳化與 heatmap | P1 |
 | Phase 6 | Measurement Integration | 示波器 CSV、量測比較、tap extraction | P1 |
-| Phase 7 | Productization | 場景管理、匯出、文件、安裝與正式發布 | P1 |
+| Phase 7 | Product Usability | 場景管理、匯出、文件、UX 與使用流程穩定化 | P1 |
 | Phase 8 | Advanced Research | FEC、Retimer、Gen7、進階 compliance-like 模型 | P2 |
 
 > 工期應依投入人力重新估算。若以一名主開發者為基準，建議每個 Phase 再拆成數個可獨立驗收的 Sprint，不直接承諾固定完成日期。
@@ -667,86 +667,58 @@ Local RX evaluates signal
 
 ---
 
-## Phase 7：Productization
+## Phase 7：Product Usability
 
 ### 目的
 
-讓產品具備穩定發布、文件、場景管理與日常使用能力。
+讓產品具備穩定的場景管理、結果匯出、文件、UX 與日常研究使用能力。
 
 ### 工作項目
 
 #### 1. Scenario Management
 
-- New／Save／Save As／Load。
-- JSON schema version。
-- Recent files。
-- Unsaved changes warning。
-- Default profiles。
-- A／B comparison。
+- 儲存 SimulationConfig（New／Save／Save As／Load）。
+- 固定 random seed 支援與可重現性。
+- 保存 Pattern、TXEQ、Channel、RXEQ 與 Metrics 設定。
+- 場景 JSON schema 版本控管與相容性（migration）。
+- 輸入範圍驗證與未儲存變更警告。
+- A／B 場景比較與 profiles。
 
-#### 2. Generation Profiles
+#### 2. Export
 
-建立：
-
-- Gen1。
-- Gen2。
-- Gen3。
-- Gen4。
-- Gen5。
-- Gen6。
-- Custom。
-
-每個 Profile 管理：
-
-- Data rate。
-- Modulation。
-- Samples per UI。
-- TX tap count。
-- Preset table。
-- Pattern defaults。
-- Channel defaults。
-- RX architecture。
-- Metric defaults。
+- 匯出 CSV 資料檔。
+- 匯出 JSON 設定與結果檔。
+- 匯出 Markdown 分析摘要與報告。
+- 匯出 Waveform 與 Eye Diagram 數據。
+- 匯出設定參數與模擬結果 metadata。
+- （不包含 EXE 建置或 Installer 封裝）。
 
 #### 3. 文件
 
 - README。
-- User Guide。
-- Architecture Guide。
-- Model Limitations。
-- Developer Guide。
-- Validation Cases。
-- Release Notes。
-- Glossary。
+- User Guide（使用者指南）。
+- Developer Guide（開發者指南）。
+- Architecture Guide（架構說明）。
+- Model Limitations（模型限制與邊界）。
+- Validation Cases（驗證情境範例）。
+- Release Notes（程式碼版本變更紀錄，不含安裝包）。
+- Glossary（術語表）。
 
-#### 4. Windows 發布
+#### 4. UI／UX 穩定化
 
-- Clean virtual environment。
-- PyInstaller onedir。
-- 啟動時間檢查。
-- Windows Defender 誤判風險檢查。
-- 版本資訊。
-- Icon。
-- Portable package。
-- Installer 是否導入另案評估。
-
-#### 5. UI／UX
-
-- 清楚區分 TX、Channel、RX、Metrics。
-- Basic／Advanced 模式。
-- Tooltips。
-- Reset scope 清楚化。
-- 設定變更提示。
-- 長任務 progress 與 cancel。
-- Error dialog 統一格式。
+- 清楚區分 TX、Channel、RX、Metrics 功能分區。
+- Basic／Advanced 操作模式與即時 Tooltips。
+- 錯誤訊息統一格式與輸入範圍提示。
+- Reset 作用範圍一致化。
+- Preset 狀態與目前參數同步顯示。
+- 大型 waveform 模擬之效能與操作回饋（progress／cancel）。
 
 ### 驗收條件
 
-- 新使用者可只靠 User Guide 完成基本情境。
-- 所有場景可儲存、載入與跨版本 migration。
-- Windows release package 可在乾淨環境執行。
-- README、版本號與實際功能一致。
-- 至少完成一次完整 release candidate 測試。
+- 新使用者可只靠 User Guide 完成基本模擬情境。
+- 所有場景可穩定儲存、載入與跨版本 migration。
+- 匯出 CSV／JSON／Markdown 功能正常且結果可重現。
+- README、版本號與實際程式碼功能一致。
 
 ---
 
@@ -939,7 +911,6 @@ test/<topic>
 - Touchstone convolution。
 - Preset sweep。
 - Memory usage。
-- Windows executable startup。
 
 ---
 
@@ -956,7 +927,6 @@ test/<topic>
 | 即時繪圖變慢 | 中 | 分離計算頻率與繪圖頻率、使用背景工作與取消 |
 | 版本場景不相容 | 中 | JSON schema version 與 migration |
 | README 落後於實作 | 中 | 文件列入 Definition of Done |
-| Windows 防毒誤判 | 中 | 維持 onedir、乾淨環境建置與 release checksum |
 
 ---
 
