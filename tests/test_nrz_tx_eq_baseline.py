@@ -11,7 +11,7 @@ Locks in existing pre-refactor behavior of:
 
 import pytest
 import numpy as np
-from main import (
+from pcie_eq.tx_eq import (
     taps_to_db,
     db_to_taps,
     calc_levels,
