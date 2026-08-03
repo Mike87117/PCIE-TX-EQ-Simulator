@@ -272,3 +272,80 @@ def test_update_pam4_eye_metrics_invalid_fallback():
     }
     assert harness.pam4_eye_metrics == expected_zero
     assert harness.pam4_t_center_score == 0.0
+
+
+def test_pam4_t_center_distinct_phase_scores():
+    """
+    Verify estimate_pam4_common_t_center_phase selects the phase with the distinctly highest minimum_eye.
+
+    Data Construction:
+    Construct a waveform where phase 8 has full amplitude (minimum_eye = 0.6667),
+    while phase 16 (and other phases) have half amplitude (minimum_eye = 0.3333).
+    """
+    pam4_levels = np.array([-1.0, -1.0 / 3.0, 1.0 / 3.0, 1.0])
+    symbols = np.tile(pam4_levels, 25)
+    wave = np.zeros(len(symbols) * SPB, dtype=float)
+
+    # For each symbol, phase 8 has scale 1.0 while other phases have scale 0.5
+    for i in range(len(symbols)):
+        start = i * SPB
+        end = (i + 1) * SPB
+        scales = np.where(np.arange(SPB) == 8, 1.0, 0.5)
+        wave[start:end] = symbols[i] * scales
+
+    harness = DummyMetricsHarness(pam4_symbols=symbols, pam4_t_center_phase=16)
+
+    # Independently verify score at phase 8 vs phase 16
+    openings_8 = harness.calc_pam4_eye_openings_at_phase(wave, 8)
+    openings_16 = harness.calc_pam4_eye_openings_at_phase(wave, 16)
+    assert openings_8["minimum_eye"] == pytest.approx(2.0 / 3.0, abs=1e-3)
+    assert openings_16["minimum_eye"] == pytest.approx(1.0 / 3.0, abs=1e-3)
+
+    best_phase, best_openings = harness.estimate_pam4_common_t_center_phase(wave)
+    assert best_phase == 8
+    assert best_openings["minimum_eye"] == pytest.approx(2.0 / 3.0, abs=1e-3)
+
+
+def test_pam4_t_center_hysteresis_update_beyond_margin():
+    """
+    Verify estimate_pam4_common_t_center_phase updates to new best phase when score exceeds old phase score by > 0.002.
+
+    Data Construction:
+    - Waveform 1: Candidate phase 8 score = 0.6673, Old phase 16 score = 0.6667 (diff = 0.0006 <= 0.002).
+      Hysteresis holds -> retains old phase 16.
+    - Waveform 2: Candidate phase 8 score = 0.6733, Old phase 16 score = 0.6667 (diff = 0.0066 > 0.002).
+      Hysteresis updates -> selects new best phase 8.
+    """
+    pam4_levels = np.array([-1.0, -1.0 / 3.0, 1.0 / 3.0, 1.0])
+    symbols = np.tile(pam4_levels, 25)
+
+    # Waveform 1: Candidate score exceeds old score by 0.0006 <= 0.002
+    wave1 = np.zeros(len(symbols) * SPB, dtype=float)
+    for i in range(len(symbols)):
+        start = i * SPB
+        end = (i + 1) * SPB
+        scales = np.where(np.arange(SPB) == 8, 1.001, np.where(np.arange(SPB) == 16, 1.0, 0.5))
+        wave1[start:end] = symbols[i] * scales
+
+    harness1 = DummyMetricsHarness(pam4_symbols=symbols, pam4_t_center_phase=16)
+    score1_old = harness1.calc_pam4_eye_openings_at_phase(wave1, 16)["minimum_eye"]
+    score1_best = harness1.calc_pam4_eye_openings_at_phase(wave1, 8)["minimum_eye"]
+    assert (score1_best - score1_old) <= 0.002
+    best_phase1, _ = harness1.estimate_pam4_common_t_center_phase(wave1)
+    assert best_phase1 == 16  # Hysteresis keeps old phase 16
+
+    # Waveform 2: Candidate score exceeds old score by 0.0066 > 0.002
+    wave2 = np.zeros(len(symbols) * SPB, dtype=float)
+    for i in range(len(symbols)):
+        start = i * SPB
+        end = (i + 1) * SPB
+        scales = np.where(np.arange(SPB) == 8, 1.010, np.where(np.arange(SPB) == 16, 1.0, 0.5))
+        wave2[start:end] = symbols[i] * scales
+
+    harness2 = DummyMetricsHarness(pam4_symbols=symbols, pam4_t_center_phase=16)
+    score2_old = harness2.calc_pam4_eye_openings_at_phase(wave2, 16)["minimum_eye"]
+    score2_best = harness2.calc_pam4_eye_openings_at_phase(wave2, 8)["minimum_eye"]
+    assert (score2_best - score2_old) > 0.002
+    best_phase2, _ = harness2.estimate_pam4_common_t_center_phase(wave2)
+    assert best_phase2 == 8  # Hysteresis updates to new phase 8
+
