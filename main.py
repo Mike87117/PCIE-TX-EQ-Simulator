@@ -23,6 +23,7 @@ from pcie_eq.tx_eq import (
     calc_gen6_levels,
     gen6_pam4_fir,
 )
+from pcie_eq.channel import simple_channel
 
 # =========================
 # Basic parameters
@@ -45,14 +46,6 @@ symbols = 2 * bits - 1
 # =========================
 # PCIe TX EQ & Channel math
 # =========================
-
-
-def simple_channel(wave, alpha=0.08):
-    out = np.zeros_like(wave)
-    out[0] = wave[0]
-    for i in range(1, len(wave)):
-        out[i] = out[i - 1] + alpha * (wave[i] - out[i - 1])
-    return out
 
 
 def pam4_symbols_from_random(count):
