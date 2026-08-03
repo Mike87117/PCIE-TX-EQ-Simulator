@@ -70,6 +70,30 @@ def test_channel_impulse_response_golden():
     np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
 
 
+def test_channel_negative_alpha_golden():
+    """
+    Explicitly test simple_channel with negative alpha (e.g. alpha = -0.5).
+
+    Formula: out[0] = wave[0]
+             out[i] = out[i-1] + alpha * (wave[i] - out[i-1])
+
+    With wave = [1.0, 2.0, 3.0] and alpha = -0.5:
+    i=0: out[0] = 1.0
+    i=1: out[1] = 1.0 + (-0.5) * (2.0 - 1.0) = 0.5
+    i=2: out[2] = 0.5 + (-0.5) * (3.0 - 0.5) = -0.75
+    """
+    wave = np.array([1.0, 2.0, 3.0], dtype=float)
+    wave_copy = wave.copy()
+
+    out = simple_channel(wave, alpha=-0.5)
+
+    assert len(out) == len(wave)
+    np.testing.assert_array_equal(wave, wave_copy)
+
+    expected = np.array([1.0, 0.5, -0.75], dtype=float)
+    np.testing.assert_allclose(out, expected, rtol=1e-7, atol=1e-7)
+
+
 def test_channel_empty_array_behavior():
     """
     Document current behavior on empty array input.
@@ -87,7 +111,6 @@ def test_channel_edge_case_alphas():
 
     - alpha = 0.0: out[i] remains constant out[0] = wave[0] for all i.
     - alpha > 1.0 (e.g. 2.0): out[i] overshoots/oscillates.
-    - alpha < 0.0 (e.g. -0.5): out[i] diverges away from target.
     """
     wave = np.array([1.0, 2.0, 3.0, 4.0], dtype=float)
 
