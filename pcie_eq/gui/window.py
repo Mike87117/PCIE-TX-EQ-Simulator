@@ -5,42 +5,9 @@ Contains PCIeTxEqSimulator main window class and associated GUI constants/helper
 Source authority: main.py @ commit bb6f9d956f5d61201b8a134b1016437a6de5156e
 """
 
-import sys
 import numpy as np
-from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QLabel, QSlider, QLineEdit, QPushButton, QComboBox,
-    QPlainTextEdit, QTabWidget, QScrollArea, QSizePolicy, QGroupBox, QGridLayout,
-    QMessageBox, QFrame
-)
-from PyQt5.QtCore import Qt, QElapsedTimer
-from PyQt5.QtGui import QDoubleValidator
-import pyqtgraph as pg
+from PyQt5.QtWidgets import QMainWindow
 
-from pcie_eq.tx_eq import (
-    PCIE_PRESET_DB_TABLE,
-    taps_to_db,
-    calc_levels,
-    db_to_taps,
-    tx_fir,
-    tx_eq_levels,
-    constrain_gen6_taps,
-    gen6_pam4_fir,
-)
-from pcie_eq.channel import simple_channel
-from pcie_eq.rx_eq import (
-    apply_ctle,
-    apply_dfe,
-    run_rx_pipeline,
-)
-from pcie_eq.metrics import (
-    calc_pam4_eye_openings_at_phase,
-    estimate_pam4_common_t_center_phase,
-    calculate_pam4_eye_metrics,
-    calculate_eye_metrics,
-)
-from pcie_eq.models import NrzSimulationConfig, Pam4SimulationConfig
-from pcie_eq.pipeline import run_simulation
 from pcie_eq.gui.constants import (
     BIT_COUNT,
     SPB,
@@ -51,7 +18,6 @@ from pcie_eq.gui.constants import (
     REALTIME_EYE_INTERVAL_MS,
     PAM4_SYMBOL_COUNT,
 )
-from pcie_eq.gui.nrz_tab import build_nrz_tab
 from pcie_eq.gui.pam4_tab import build_pam4_tab
 from pcie_eq.gui.nrz_controller import NrzControllerMixin
 from pcie_eq.gui.pam4_controller import Pam4ControllerMixin
