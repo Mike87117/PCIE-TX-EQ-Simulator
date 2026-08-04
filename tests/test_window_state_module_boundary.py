@@ -3,13 +3,13 @@ Module boundary and state contract tests for pcie_eq.gui.window_state module.
 
 Verifies:
 1. initialize_window_state function location, __all__, and allowed imports in window_state.py.
-2. pcie_eq/gui/window.py delegates attribute initialization to initialize_window_state (AST check).
+2. pcie_eq/gui/window.py delegates attribute initialization to initialize_window_state and has no direct inline assignments of extracted state attributes (AST check).
 3. Order of calls inside PCIeTxEqSimulator.__init__() (AST check).
 4. All NRZ and PAM4 default attribute values and metrics dictionaries.
 5. bits and symbols are copied (.copy()), not referenced as aliases.
 6. cm1_current and cp1_current match db_to_taps(1.5, -3.5).
 7. QElapsedTimer instance created and started.
-8. pam4_symbols_from_random(PAM4_SYMBOL_COUNT) called exactly once.
+8. pam4_symbols_from_random(PAM4_SYMBOL_COUNT) called exactly once and assigned by identity.
 """
 
 import ast
@@ -21,6 +21,36 @@ from PyQt5.QtCore import QElapsedTimer
 from pcie_eq.tx_eq import db_to_taps
 from pcie_eq.gui.constants import SPB, PAM4_SYMBOL_COUNT
 from pcie_eq.gui import window, window_state
+
+EXTRACTED_ATTRIBUTES = [
+    "syncing_ui",
+    "control_mode",
+    "current_preset",
+    "channel_alpha_current",
+    "pre_db_current",
+    "de_db_current",
+    "cm1_current",
+    "cp1_current",
+    "rx_view_mode",
+    "ctle_boost_current",
+    "dfe_tap1_current",
+    "dfe_tap2_current",
+    "dfe_tap3_current",
+    "eye_metrics",
+    "bits",
+    "symbols",
+    "realtime_eye_timer",
+    "gen6_preset_current",
+    "pam4_cm2_current",
+    "pam4_cm1_current",
+    "pam4_cp1_current",
+    "pam4_alpha_current",
+    "pam4_eye_mode",
+    "pam4_t_center_phase",
+    "pam4_t_center_score",
+    "pam4_symbols",
+    "pam4_eye_metrics",
+]
 
 
 def test_window_state_function_location_and_all():
@@ -90,6 +120,21 @@ def test_window_ast_delegates_state_initialization():
         "pam4_full_refresh",
     ]
 
+    # Verify no extracted attributes are directly assigned inside __init__
+    assigned_self_attrs = set()
+    for stmt in ast.walk(init_node):
+        if isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+                    assigned_self_attrs.add(target.attr)
+                elif isinstance(target, ast.Tuple):
+                    for elt in target.elts:
+                        if isinstance(elt, ast.Attribute) and isinstance(elt.value, ast.Name) and elt.value.id == "self":
+                            assigned_self_attrs.add(elt.attr)
+
+    inlined_assignments = set(EXTRACTED_ATTRIBUTES).intersection(assigned_self_attrs)
+    assert not inlined_assignments, f"PCIeTxEqSimulator.__init__() still directly assigns: {inlined_assignments}"
+
 
 def test_initialize_window_state_values_and_copies():
     """Verify default attribute values, dict structures, copy behavior, and QElapsedTimer validity."""
@@ -152,7 +197,7 @@ def test_initialize_window_state_values_and_copies():
     assert dummy.pam4_eye_mode == "raw"
     assert dummy.pam4_t_center_phase == SPB // 2
     assert dummy.pam4_t_center_score == 0.0
-    assert np.array_equal(dummy.pam4_symbols, mock_symbols)
+    assert dummy.pam4_symbols is mock_symbols
     assert dummy.pam4_eye_metrics == {
         "upper_eye": 0.0,
         "middle_eye": 0.0,
