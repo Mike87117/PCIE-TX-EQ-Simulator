@@ -130,16 +130,22 @@ def test_make_slider_contract(qapp):
     assert slider.orientation() == Qt.Horizontal
 
     edit = res["edit"]
-    assert edit.maximumWidth() == 80 or edit.width() == 80 or edit.sizePolicy() is not None
     assert int(edit.alignment()) & int(Qt.AlignRight)
 
     layout = res["layout"]
     assert layout.count() == 3
-    assert isinstance(layout.itemAt(0).widget(), QLabel)
-    assert layout.itemAt(0).widget().text() == "Test Parameter"
-    assert layout.itemAt(0).widget().width() == 120 or layout.itemAt(0).widget().maximumWidth() == 120
-    assert isinstance(layout.itemAt(1).widget(), QSlider)
-    assert isinstance(layout.itemAt(2).widget(), QLineEdit)
+
+    label = layout.itemAt(0).widget()
+    assert isinstance(label, QLabel)
+    assert label.text() == "Test Parameter"
+    assert label.minimumWidth() == 120
+    assert label.maximumWidth() == 120
+
+    assert layout.itemAt(1).widget() is slider
+
+    assert layout.itemAt(2).widget() is edit
+    assert edit.minimumWidth() == 80
+    assert edit.maximumWidth() == 80
 
 
 def test_ui_sync_contract():
