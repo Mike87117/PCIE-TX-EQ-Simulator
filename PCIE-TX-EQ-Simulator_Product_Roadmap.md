@@ -1,8 +1,9 @@
-# PCIE-TX-EQ-Simulator 後續產品開發計畫
+# PCIE-TX-EQ-Simulator Product Roadmap
 
-> 文件用途：作為 PCIE-TX-EQ-Simulator 的共同開發藍圖，讓產品、開發、測試與使用者對產品定位、優先順序、交付標準與版本範圍有一致認知。  
-> 文件狀態：規劃基準版  
-> 適用專案：`Mike87117/PCIE-TX-EQ-Simulator`
+> 文件用途：作為產品、開發、測試與 Merge Gate 的共同開發藍圖。  
+> 文件狀態：Active Roadmap  
+> 最後核對日期：2026-08-04  
+> 適用 Repository：`Mike87117/PCIE-TX-EQ-Simulator`
 
 ---
 
@@ -14,26 +15,119 @@ PCIE-TX-EQ-Simulator 的定位是：
 
 產品應協助使用者理解：
 
-- TX FIR tap、Preshoot、De-emphasis 與實際波形之間的關係。
+- TX FIR tap、Preshoot、De-emphasis 與波形之間的關係。
 - Channel loss、ISI、reflection、noise 與 jitter 對訊號品質的影響。
 - CTLE、FFE、DFE、CDR 與 slicer 如何改善接收品質。
-- PCIe Gen1～Gen5 NRZ 與 Gen6 PAM4 的 equalization 差異。
-- TX、Channel 與 RX 設定如何共同影響 Eye、Margin、BER 與最佳取樣點。
+- PCIe Gen1～Gen5 NRZ 與 Gen6 PAM4 equalization 的差異。
+- TX、Channel、RX、sampling 與 threshold 如何共同影響 Eye、Margin 與 error metrics。
 - 理想數學模型、示波器類波形與實際量測結果為何可能不同。
 
 本產品**不是 PCI-SIG Compliance Tool**，不得宣稱模擬結果等同正式示波器、BERT、SigTest、Seasim 或 PCI-SIG 認證結果。
 
 ---
 
-## 2. 目前產品基準
+## 2. Roadmap 的事實來源與更新規則
 
-目前已具備的主要能力：
+Roadmap 內容必須以已合併至 `main` 的程式碼為準。
+
+狀態定義：
+
+- **Completed**：PR 已合併至 `main`，CI 與 Merge Gate 通過。
+- **In Review**：已有 PR，但尚未合併，不得列為完成。
+- **Planned**：只有規劃或 Issue，尚未開始實作。
+- **Blocked**：依賴尚未完成，或 Merge Gate 發現阻擋問題。
+
+每次完成下列事件時，應同步更新本文件：
+
+- Phase 完成。
+- Roadmap 順序或依賴關係改變。
+- 新增或取消主要產品能力。
+- 實際架構與文件描述產生明顯落差。
+- Regression baseline、CI policy 或 Merge Gate 發生重大改變。
+
+Draft PR、未合併 branch 與本機結果只能列為進行中證據，不能當成正式產品基準。
+
+---
+
+## 3. 目前已驗證的產品基準
+
+### 3.1 `main` 基準
+
+截至 2026-08-04，本文件更新 branch 建立時的正式基準為：
+
+```text
+main commit: ef5ebda83fecd0fcd830555ab76cb07945788076
+regression baseline: 167 tests
+CI: GitHub Actions / windows-latest / Python 3.11
+```
+
+### 3.2 已完成工作
+
+#### Phase 0：Baseline Freeze — Completed
+
+已完成：
+
+- NRZ／PAM4 baseline tests。
+- TX EQ、Channel、RX EQ、Metrics 與 GUI interaction regression tests。
+- Preset、Reset、random sequence、plotting contract 與重要數值行為鎖定。
+- NRZ Preset 0～10 resolution contract 鎖定。
+
+#### Phase 1：Core Refactor — Completed
+
+已完成：
+
+- `main.py` 已縮減為 launcher 與相容匯出層。
+- TX EQ、Channel、RX EQ、Metrics、Models 與 Pipeline 已拆分。
+- `run_simulation(config)` 統一 pipeline 已建立。
+- NRZ／PAM4 controller、tab builder、Window state、layout 與 helpers 已模組化。
+- 核心模組具備 module-boundary tests。
+- GitHub Actions regression CI 已建立。
+
+### 3.3 目前進行中
+
+- Roadmap Issue：#48 `Phase 2: Channel Foundation`。
+- Implementation Issue：#49 `Add GUI-independent pattern generator core`。
+- Draft PR：#50。
+- PR #50 在合併前仍屬 **In Review**；只有通過 dtype、RNG、fingerprint 與 GUI compatibility Merge Gate 後才能列為 Completed。
+
+### 3.4 目前實際架構
+
+```text
+PCIE-TX-EQ-Simulator/
+├─ main.py
+├─ PCIE-TX-EQ-Simulator_Product_Roadmap.md
+├─ pcie_eq/
+│  ├─ __init__.py
+│  ├─ models.py
+│  ├─ tx_eq.py
+│  ├─ channel.py
+│  ├─ rx_eq.py
+│  ├─ metrics.py
+│  ├─ pipeline.py
+│  └─ gui/
+│     ├─ window.py
+│     ├─ window_state.py
+│     ├─ window_layout.py
+│     ├─ window_helpers.py
+│     ├─ nrz_controller.py
+│     ├─ pam4_controller.py
+│     ├─ nrz_tab.py
+│     ├─ pam4_tab.py
+│     └─ random_data.py
+├─ tests/
+├─ requirements.txt
+└─ requirements-dev.txt
+```
+
+`pcie_eq.patterns` 只有在 PR #50 通過並合併後，才正式成為上述架構的一部分。
+
+### 3.5 目前已有能力
 
 - PCIe Gen1～Gen5 NRZ TX EQ 視覺化。
-- Preset 0～10。
+- NRZ Preset 0～10。
 - Preshoot、De-emphasis 與 `C-1 / C0 / C+1` 顯示。
-- 簡化的 Low-pass Channel。
-- NRZ CTLE。
+- 簡化的一階 Low-pass Channel。
+- NRZ 簡化 CTLE。
 - NRZ 3-tap 手動 DFE。
 - Channel、CTLE 與 DFE Sample Margin 檢視。
 - PCIe Gen6 PAM4 4-tap TX FIR。
@@ -41,306 +135,226 @@ PCIE-TX-EQ-Simulator 的定位是：
 - PAM4 Raw Eye 與 Common `t_center` Eye。
 - NRZ／PAM4 波形與近似 Eye metrics。
 - PyQt5 GUI 與 PyQtGraph 即時顯示。
+- GUI-independent simulation pipeline。
+- Windows GitHub Actions regression gate。
 
-目前主要限制：
+### 3.6 目前主要限制
 
-- 大部分程式集中在單一 `main.py`。
-- GUI、模擬邏輯、資料狀態與 metrics 高度耦合。
-- Channel 僅為一階 Low-pass 模型。
+- Channel 仍只有一階 Low-pass Alpha，尚未形成可替換的 Channel interface。
+- 尚無 impulse response convolution、synthetic channel 或 Touchstone import。
+- Pattern 尚未具有完整的 PRBS、user-defined sequence 與 versioned configuration contract。
+- NRZ sampling phase 仍缺少完整可調 API、phase sweep 與 CDR。
 - CTLE 與 DFE 仍是簡化教學模型。
-- NRZ sampling phase 固定，沒有完整 CDR。
-- PAM4 尚未加入 RXEQ。
-- 沒有 Touchstone、impulse response、noise、jitter 與 crosstalk。
-- 沒有 Density Eye、Eye Width、Bathtub 與可靠的 BER／SER 評估。
-- README 與實際功能存在落差。
-- 缺少完整自動測試、場景回歸測試與版本化設定格式。
+- PAM4 尚未加入完整 RXEQ、threshold optimization 與 decision chain。
+- 尚無 noise、jitter、crosstalk 與統計型 impairment model。
+- 尚無可信的 Density Eye、Eye Width、Bathtub、BER／SER estimate。
+- 尚無 versioned scenario schema、experiment run、batch result 與完整 export contract。
+- 尚無 Auto EQ、heatmap 或 joint optimization。
+- 尚無示波器 waveform import 與 measured-vs-simulated workflow。
 
 ---
 
-## 3. 產品目標
+## 4. 開發先後順序原則
 
-### 3.1 第一階段目標
+### 4.1 依賴優先
 
-建立一個可維護、可測試、可持續擴充的模擬核心，使 GUI 不再直接承擔所有運算。
+後續功能必須依照資料與演算法依賴順序實作，不以 UI 顯示順序決定開發順序。
 
-### 3.2 中期目標
-
-完成可信的：
+正確主幹為：
 
 ```text
-Pattern
-  → TX EQ
-  → Channel
-  → RX CTLE / FFE / DFE
-  → CDR / Slicer
-  → Eye / Margin / BER Metrics
+Pattern Core
+  → Pattern Configuration
+  → Channel Interface
+  → Impulse Convolution
+  → Pulse / Cursor Analysis
+  → Channel Views / Touchstone
+  → Sampling / RXEQ
+  → Signal Impairments
+  → Statistical Metrics
+  → Reproducible Scenario / Experiment
+  → Sweep / Auto Equalization
+  → Measurement Integration
+  → Product UX / Release
 ```
 
-### 3.3 長期目標
+### 4.2 Core 先於 GUI
 
-讓使用者可以：
-
-- 匯入實際 Channel 或示波器資料。
-- 比較不同 TX Preset、RX setting 與 Channel。
-- 自動搜尋較佳 Equalization 設定。
-- 觀察 PCIe Link Equalization 的概念流程。
-- 儲存、重現與匯出完整分析場景。
-
----
-
-## 4. 非產品目標
-
-下列項目不列入近期產品承諾：
-
-- 正式 PCI-SIG Compliance Pass／Fail。
-- 完整 LTSSM 模擬器。
-- 晶體管級 SerDes analog simulation。
-- 替代正式示波器、BERT 或 Channel Compliance Software。
-- 宣稱模擬 preset、BER、SNDR、TDECQ 或 receiver tolerance 結果具有認證效力。
-- 在基礎架構尚未穩定前直接擴充 PCIe Gen7 全功能。
-- 目前開發階段不處理 Windows EXE、PyInstaller、Installer、Portable package、發布封裝或防毒誤判。若未來需要恢復打包或安裝流程，必須另立產品決策、Issue 與驗收標準，不得視為目前 Roadmap 的既定工作。
-
----
-
-## 5. 開發原則
-
-1. **先重整，再擴充。**  
-   新功能不得繼續大量堆疊在 `main.py`。
-
-2. **運算核心不得依賴 GUI。**  
-   模擬函式不得直接讀寫 PyQt widget。
-
-3. **每一階段都必須可執行。**  
-   不採用長期無法執行的全面重寫。
-
-4. **先建立 baseline，再移動程式。**  
-   重整前後相同輸入應得到相同輸出。
-
-5. **教學模型與近似模型必須明確標示。**  
-   不得將簡化結果包裝為正式規範結果。
-
-6. **每個新模型都要有可視化與數值驗證。**
-
-7. **NRZ 與 PAM4 共用架構，但不強迫共用不合理的演算法。**
-
-8. **所有場景必須可重現。**  
-   Pattern、random seed、EQ 設定與 Channel 設定都要能保存。
-
----
-
-## 6. 整體 Roadmap
-
-| 階段 | 里程碑 | 主要成果 | 優先級 |
-|---|---|---|---|
-| Phase 0 | Baseline Freeze | 鎖定現有行為、測試向量與版本基準 | P0 |
-| Phase 1 | Core Refactor | 模擬核心與 GUI 分離、建立 pipeline | P0 |
-| Phase 2 | Channel Foundation | Pulse、Cursor、Impulse、Touchstone 基礎 | P0 |
-| Phase 3 | NRZ RXEQ | Sampling、CDR、CTLE、DFE、NRZ metrics | P0 |
-| Phase 4 | PAM4 RXEQ | AGC、CTLE、FFE、DFE、3 thresholds、SER | P0 |
-| Phase 5 | Auto Equalization | Sweep、Auto adaptation、最佳化與 heatmap | P1 |
-| Phase 6 | Measurement Integration | 示波器 CSV、量測比較、tap extraction | P1 |
-| Phase 7 | Product Usability | 場景管理、匯出、文件、UX 與使用流程穩定化 | P1 |
-| Phase 8 | Advanced Research | FEC、Retimer、Gen7、進階 compliance-like 模型 | P2 |
-
-> 工期應依投入人力重新估算。若以一名主開發者為基準，建議每個 Phase 再拆成數個可獨立驗收的 Sprint，不直接承諾固定完成日期。
-
----
-
-# 7. 各階段詳細計畫
-
-## Phase 0：Baseline Freeze
-
-### 目的
-
-在重整前建立可比較的產品基準，避免架構調整後無法判斷功能是否被破壞。
-
-### 工作項目
-
-- 建立目前穩定版本 tag。
-- 固定 NRZ 與 PAM4 random seed。
-- 建立標準測試 pattern。
-- 保存標準場景設定。
-- 記錄目前各場景的 waveform、tap、Eye metrics 與 status values。
-- 建立 Smoke Test Checklist。
-- 更新 README，先正確反映目前已有的 RXEQ 功能。
-- 記錄已知限制與已知問題。
-
-### 必須建立的 Baseline Cases
-
-- NRZ No EQ。
-- NRZ Preshoot only。
-- NRZ De-emphasis only。
-- NRZ Preshoot + De-emphasis。
-- NRZ Channel only。
-- NRZ CTLE。
-- NRZ CTLE + DFE。
-- PAM4 Q0。
-- PAM4 Q6。
-- PAM4 Raw Eye。
-- PAM4 Common `t_center` Eye。
-
-### 驗收條件
-
-- 所有基準場景都能由固定設定重現。
-- 重啟程式後能得到相同 pattern 與相同數值結果。
-- README 不再將目前產品描述為只有 TXEQ。
-- 建立第一批 regression data。
-
----
-
-## Phase 1：Core Refactor
-
-### 目的
-
-將模擬核心、狀態、metrics 與 GUI 分離，建立後續功能的共同基礎。
-
-### 建議目錄
+每一項新能力原則上依序完成：
 
 ```text
-PCIE-TX-EQ-Simulator/
-├─ main.py
-├─ pcie_eq/
-│  ├─ __init__.py
-│  ├─ models.py
-│  ├─ profiles.py
-│  ├─ patterns.py
-│  ├─ tx_eq.py
-│  ├─ channel.py
-│  ├─ rx_eq.py
-│  ├─ metrics.py
-│  └─ pipeline.py
-├─ ui/
-│  ├─ main_window.py
-│  ├─ nrz_tab.py
-│  ├─ pam4_tab.py
-│  └─ widgets.py
-└─ tests/
-   ├─ test_tx_eq.py
-   ├─ test_channel.py
-   ├─ test_rx_eq.py
-   ├─ test_metrics.py
-   └─ test_pipeline.py
+Pure Core API
+  → Validation Contract
+  → Unit Tests
+  → Module Boundary Tests
+  → Existing Behavior Compatibility
+  → GUI Integration
+  → Documentation
 ```
 
-### 工作項目
+不得先在 controller 中堆疊功能，再回頭尋找 core boundary。
 
-#### 1. 建立資料模型
+### 4.3 Channel 先於 Cursor 分析
 
-至少包含：
+Single-bit pulse pattern 只是分析輸入。要得到有意義的 pre／main／post cursor，必須先有明確的 Channel representation、sampling interval 與 convolution contract。
 
-- `SimulationConfig`
-- `TxEqConfig`
-- `ChannelConfig`
-- `RxEqConfig`
-- `ClockConfig`
-- `PatternConfig`
-- `SimulationResult`
-- `EyeMetrics`
-- `Pam4Metrics`
+因此原 Roadmap 中「Pulse／Cursor Analysis 早於 Channel Model」的順序已修正。
 
-#### 2. 抽離 TX EQ
+### 4.4 Metrics 先穩定，再做最佳化
 
-移出：
+Auto EQ 需要穩定且可重現的 objective。不得在 Eye Width、sampling phase、threshold、noise／jitter 與結果格式仍不穩定時提前建立「最佳 preset」或「最佳設定」功能。
 
-- Preset tables。
-- dB／tap conversion。
-- NRZ level model。
-- NRZ FIR。
-- PAM4 FIR。
-- Tap constraint。
+Preset Resolver 與 Preset Sweep 因此歸入 Auto Equalization 前置工作，不屬於目前 Phase 2 的立即工作。
 
-#### 3. 抽離 Channel
+### 4.5 最小可重現資料契約先於批次工作
 
-移出：
+Sweep、Auto EQ 與 Measurement comparison 必須能保存：
 
-- Low-pass model。
-- Channel configuration。
-- Waveform convolution interface。
+- Pattern 與 seed。
+- TX EQ。
+- Channel。
+- RX EQ。
+- Sampling／threshold。
+- Metric objective。
+- Result metadata。
 
-#### 4. 抽離 RX EQ
+因此完整 Auto EQ 前必須先建立最小 versioned Scenario／Experiment contract。
 
-移出：
+### 4.6 相容性優先於表面相同
 
-- CTLE。
-- DFE。
-- Sampling。
-- Slicer。
-- RX pipeline。
+回歸驗證不得只比較經過轉型或正規化後的結果。需要視契約同時鎖定：
 
-#### 5. 抽離 Metrics
-
-移出：
-
-- NRZ Eye metrics。
-- DFE sample margin。
-- PAM4 eye openings。
-- Error count。
-
-#### 6. 建立統一 Pipeline
-
-```python
-result = run_simulation(config)
-```
-
-GUI 僅負責：
-
-```text
-讀取控制項
-  → 建立 SimulationConfig
-  → 執行 run_simulation()
-  → 顯示 SimulationResult
-```
-
-#### 7. 拆分 GUI
-
-- Main Window。
-- NRZ Tab。
-- PAM4 Tab。
-- 共用 Slider／Numeric Input component。
-- Plot rendering helper。
-
-### 驗收條件
-
-- `pcie_eq` 模組可以在沒有 PyQt 的情況下執行測試。
-- GUI 不直接呼叫底層運算細節。
-- Baseline Cases 的結果在允許誤差內保持一致。
-- Reset、Preset、Slider、Text input 與切換分頁行為不退化。
-- 所有核心模組具備單元測試。
-- `main.py` 僅保留程式入口或極少量組裝程式碼。
-
-### 此階段禁止事項
-
-- 不同時大幅修改 UI。
-- 不在重整過程順便更改所有數學模型。
-- 不新增 Touchstone、CDR、Auto EQ 等大型功能。
-- 不進行整套重寫。
+- value。
+- shape。
+- dtype。
+- array ordering。
+- RNG state consumption。
+- import surface。
+- call sequence。
+- GUI state。
 
 ---
 
-## Phase 2：Channel Foundation
+## 5. 修訂後的整體 Roadmap
 
-### 目的
+| Phase | 里程碑 | 狀態 | 啟動依賴 | 主要成果 |
+|---|---|---|---|---|
+| Phase 0 | Baseline Freeze | Completed | 無 | regression vectors、GUI baseline、behavior freeze |
+| Phase 1 | Core Refactor | Completed | Phase 0 | core modules、pipeline、GUI split、CI |
+| Phase 2 | Channel Foundation | Active | Phase 1 | pattern、channel interface、impulse、cursor、channel views |
+| Phase 3 | NRZ Sampling & RXEQ | Planned | Phase 2 | sampling、phase sweep、CTLE、FFE、DFE、teaching CDR |
+| Phase 4 | PAM4 RXEQ | Planned | Phase 2；共用 Phase 3 架構 | AGC、CTLE、FFE、DFE、3 thresholds、decision chain |
+| Phase 5 | Signal Impairments & Statistical Metrics | Planned | Phase 3、4 基礎穩定 | noise、jitter、density eye、eye width、bathtub、BER／SER estimate |
+| Phase 6 | Reproducibility & Experiment Infrastructure | Planned | Config contracts 穩定 | versioned scenario、experiment run、batch result、export core |
+| Phase 7 | Sweep & Auto Equalization | Planned | Phase 5、6 | preset／tap sweep、heatmap、optimization、history |
+| Phase 8 | Measurement Integration | Planned | Phase 2、5、6 | waveform import、alignment、comparison、tap extraction |
+| Phase 9 | Product Usability & Release | Planned | 核心工作流程穩定 | scenario UX、reports、guides、error UX、release discipline |
+| Phase 10 | Advanced Research | Planned | 至少一個穩定公開版本 | retimer、FEC、Gen7、plugin、automation |
 
-讓使用者能觀察真正與 Channel 相關的 ISI，而不只是一個 Low-pass Alpha。
+本次修訂將原本過早的 Auto Equalization 往後移，並將「可重現 Scenario／Experiment」從單純 UX 功能提升為 Auto EQ 的正式前置依賴。
 
-### 工作項目
+---
 
-#### 1. Pattern Generator
+# 6. Phase 2：Channel Foundation
 
-新增：
+## 6.1 目的
 
+建立真正可替換、可驗證、可重現的 Pattern 與 Channel 基礎，讓後續 ISI、cursor、sampling 與 RXEQ 不再只依賴單一 Low-pass Alpha。
+
+## 6.2 依賴順序
+
+### Step 2.1：Pattern Core
+
+#### Implementation 22 — In Review
+
+建立：
+
+- NRZ bits／symbols conversion。
+- Seeded 與 global RNG random generation。
 - All 0／All 1。
-- `1010`。
+- Alternating。
 - Long run。
 - Single transition。
 - Single-bit pulse。
-- PRBS7／9／15／23／31。
-- User-defined sequence。
-- 固定 random seed。
 
-#### 2. Pulse／Cursor Analysis
+Merge Gate 必須鎖定：
 
-顯示：
+- legacy global RNG consumption order。
+- initial NRZ／PAM4 sequence。
+- value、shape 與 dtype。
+- raw-byte fingerprint。
+- GUI Generate New Waveform 行為。
+
+### Step 2.2：PRBS Core
+
+完成 Pattern Core 後，再加入：
+
+- PRBS7。
+- PRBS9。
+- PRBS15。
+- PRBS23。
+- PRBS31。
+- polynomial、seed、initial state 與 output convention 文件化。
+- hardcoded golden vectors 與 period／prefix tests。
+
+不得先加入 GUI selector。
+
+### Step 2.3：Pattern Configuration Contract
+
+建立 GUI-independent 的 pattern request／configuration contract，至少描述：
+
+- pattern type。
+- symbol count。
+- seed。
+- PRBS order／initial state。
+- deterministic pattern parameters。
+- user-defined bits／symbols。
+
+同時加入 user-defined sequence validation，但不在此步驟處理完整 Scenario save/load UI。
+
+### Step 2.4：Channel Interface 與 Config
+
+先建立統一 Channel contract，再加入更多 Channel model：
+
+```text
+none
+legacy_lowpass
+impulse_response
+```
+
+要求：
+
+- `none` 必須是 TX waveform identity。
+- `legacy_lowpass` 必須保持目前 baseline。
+- core 不依賴 GUI。
+- 所有 mode 有明確 input／output shape、dtype 與 validation。
+
+### Step 2.5：Impulse Response Convolution
+
+建立：
+
+- impulse validation。
+- normalization policy。
+- convolution length／alignment contract。
+- time-zero／main cursor reference。
+- truncation／padding policy。
+- invalid data error model。
+
+先完成單元測試，再接入 pipeline。
+
+### Step 2.6：Synthetic 與 User-defined Impulse Response
+
+依序加入：
+
+1. Synthetic impulse response。
+2. User-provided numeric impulse response。
+3. 可重現的 built-in teaching channels。
+
+此時仍不處理 Touchstone parser。
+
+### Step 2.7：Pulse／Cursor Analysis
+
+Channel contract 穩定後，才建立：
 
 ```text
 Pre3  Pre2  Pre1  Main  Post1  Post2  Post3
@@ -348,660 +362,329 @@ Pre3  Pre2  Pre1  Main  Post1  Post2  Post3
 
 提供：
 
-- Main cursor amplitude。
-- Pre-cursor ISI。
-- Post-cursor ISI。
-- Residual ISI。
-- 最佳 sampling point。
-- TX、Channel、CTLE 後的 cursor 比較。
+- main cursor amplitude。
+- pre-cursor ISI。
+- post-cursor ISI。
+- residual ISI。
+- cursor sampling phase。
+- TX、Channel、CTLE 後的 cursor comparison contract。
 
-#### 3. Channel Model 分級
+Cursor extraction 必須有 synthetic golden impulse cases，不能只依靠視覺判斷。
 
-- Simplified Low-pass。
-- Synthetic impulse response。
-- User-defined impulse response。
-- Touchstone `.s2p`。
-- Differential `.s4p`／`SDD21`，視函式庫與資料格式支援情況逐步加入。
+### Step 2.8：Pattern／Channel GUI Integration
 
-#### 4. Channel Views
+等 PatternConfig、ChannelConfig、convolution 與 cursor result 穩定後，再一次整合：
 
-- Frequency response。
-- Insertion loss。
-- Impulse response。
-- Step response。
-- Pulse response。
-- Time-domain waveform。
+- Pattern selector。
+- Pattern parameters。
+- Channel mode selector。
+- Impulse input。
+- Cursor table／overlay。
 
-### 驗收條件
+避免在 core contract 尚未穩定時反覆重新設計 GUI。
 
-- Channel 可以透過統一介面切換。
-- 匯入相同 Channel 時結果可重現。
-- Pulse response 可正確標示 main、pre 與 post cursor。
-- No Channel 模式不改變原始 TX waveform。
-- Impulse response convolution 有單元測試。
-- 不合法 Touchstone 或 impulse data 有清楚錯誤訊息。
+### Step 2.9：Channel Views
 
----
+依既有 core result 顯示：
 
-## Phase 3：NRZ RXEQ
+- frequency response。
+- insertion loss。
+- impulse response。
+- step response。
+- pulse response。
+- time-domain waveform。
 
-### 目的
+所有 plot 必須使用 result data，不在 GUI 內重新計算模型。
 
-完成可理解、可比較、可自動調整的 NRZ receiver chain。
-
-### 工作項目
-
-#### 1. Sampling Phase
-
-- 手動 phase slider。
-- Phase sweep。
-- 最佳 Eye Height phase。
-- 最佳 Margin phase。
-- Sampling point overlay。
-
-#### 2. CDR
-
-第一版採教學模型：
-
-- Fixed phase。
-- Auto center。
-- Early／Late detector。
-- Phase tracking。
-- Frequency offset。
-- Lock／unlock indication。
-
-後續再評估：
-
-- Loop bandwidth。
-- Jitter tracking。
-- Clock phase trajectory。
-
-#### 3. CTLE
-
-加入：
-
-- DC gain。
-- Peaking dB。
-- Zero frequency。
-- Pole frequency。
-- Frequency response plot。
-- Noise amplification 顯示。
-
-#### 4. RX FFE
-
-新增：
-
-- Pre-cursor taps。
-- Main tap。
-- Post-cursor taps。
-- Tap normalization。
-- Manual mode。
-
-#### 5. DFE
-
-新增：
-
-- 可調 tap 數量。
-- 1～5 taps 初始版本。
-- Tap contribution 顯示。
-- Error propagation 顯示。
-- Decision history。
-- Manual／Auto mode。
-
-#### 6. NRZ Metrics
-
-- Eye Height。
-- Eye Width。
-- Sampling Margin。
-- Decision histogram。
-- Error count。
-- BER estimate。
-- Horizontal／Vertical bathtub 初版。
-- Density Eye。
-
-### 驗收條件
-
-- 使用者可以比較 Channel、CTLE、FFE、DFE 各階段的結果。
-- Sampling phase 改變會同步更新 Eye 與 Metrics。
-- Auto center 能找到合理取樣位置。
-- DFE taps 對 post-cursor ISI 的影響可由 pulse response 驗證。
-- CTLE 過度增益時能觀察到 noise amplification。
-- 所有 metrics 都清楚標示為模擬或估計值。
-
----
-
-## Phase 4：PAM4 RXEQ
-
-### 目的
-
-使 Gen6 分頁從 PAM4 TX EQ Viewer 升級為完整 PAM4 TX／Channel／RX 教學流程。
-
-### 工作項目
-
-#### 1. PAM4 Pattern 與 Coding
-
-- PAM4 symbol generator。
-- Gray coding。
-- Precoding on／off。
-- User-defined PAM4 symbols。
-
-#### 2. PAM4 RX Front End
-
-- AGC／VGA。
-- PAM4 CTLE。
-- RX FFE。
-- Common CDR phase。
-- 三個 slicer thresholds。
-
-#### 3. PAM4 DFE
-
-- 多 tap DFE。
-- 各 level decision。
-- Error propagation。
-- Burst error observation。
-
-#### 4. Threshold Optimization
-
-- Manual thresholds。
-- Auto thresholds。
-- Level mean。
-- Level sigma。
-- Level mismatch。
-
-#### 5. PAM4 Metrics
-
-- Upper／Middle／Lower Eye Height。
-- Upper／Middle／Lower Eye Width。
-- Minimum Eye。
-- Eye skew。
-- Symbol Error Rate。
-- Bit Error Rate。
-- Error burst length。
-- Level histogram。
-
-### 驗收條件
-
-- PAM4 RXEQ 有獨立的 TX、Channel、RX 與 decision views。
-- 三個 thresholds 可手動與自動調整。
-- Upper／Middle／Lower 三個 eye 使用共同 CDR phase。
-- Auto threshold 不得以已知 transmitted symbol 作為正式 decision shortcut；若教學模式使用 reference data，必須明確標示。
-- SER 與 BER 計算具有固定 seed 的回歸測試。
-
----
-
-## Phase 5：Auto Equalization
-
-### 目的
-
-讓使用者從手動觀察升級到系統化比較與最佳化。
-
-### 工作項目
-
-#### 1. Sweep Engine
-
-- TX Preset sweep。
-- TX tap sweep。
-- CTLE sweep。
-- FFE sweep。
-- DFE sweep。
-- Sampling phase sweep。
-- PAM4 threshold sweep。
-
-#### 2. Heatmap
-
-支援：
-
-- TX Preset × CTLE。
-- TX Preset × DFE。
-- CTLE × Sampling phase。
-- Channel loss × Preset。
-- PAM4 Threshold × CTLE。
-
-顏色指標可選：
-
-- Eye Height。
-- Eye Width。
-- Margin。
-- BER／SER。
-- Minimum PAM4 Eye。
-
-#### 3. Auto Adaptation
+### Step 2.10：Touchstone
 
 依序實作：
 
-1. Grid search。
-2. Coordinate descent。
-3. Sign-sign LMS 或簡化 decision-directed adaptation。
-4. Joint TX／RX optimization。
+1. `.s2p` single-ended teaching path。
+2. 明確的 frequency unit、port、reference impedance 與 interpolation contract。
+3. `.s4p`／mixed-mode／`SDD21` 評估。
 
-#### 4. Equalization History
+Differential `.s4p` 不得與第一版 `.s2p` 同一個大型 PR 一次完成。
 
-顯示：
+## 6.3 Phase 2 Exit Gate
 
-- Iteration。
-- Current taps。
-- Metric。
-- Best setting。
-- Convergence。
-- Lock／fail reason。
+Phase 2 完成必須同時符合：
 
-#### 5. Link Equalization Visualizer
+- Pattern 可以由固定設定 bit-exact 重現。
+- Channel 可透過統一介面切換。
+- `none` 與 legacy Low-pass regression 通過。
+- impulse convolution 有 hardcoded golden tests。
+- pulse response 能正確標示 main、pre、post cursor。
+- Pattern／Channel core 可在無 PyQt 環境執行。
+- GUI 不直接實作 pattern 或 channel 數學。
+- Touchstone 錯誤輸入有清楚且可測試的錯誤。
+- 所有 PR 通過 GitHub Actions 與 Merge Gate。
 
-概念性顯示：
+## 6.4 Phase 2 非範圍
 
-```text
-Local RX evaluates signal
-  → requests Link Partner TX preset/coefficient
-  → Link Partner updates TX
-  → Local RX re-evaluates
-```
-
-### 驗收條件
-
-- Sweep 可以在 GUI 外獨立執行。
-- Auto EQ 的結果可以保存與重現。
-- 使用者可選擇最佳化目標。
-- 最佳化過程不阻塞 GUI；需有取消功能。
-- 同一場景與同一 random seed 得到一致結果。
-- Link Equalization 畫面不得宣稱完整模擬 LTSSM。
+- CDR。
+- 完整 NRZ／PAM4 RXEQ redesign。
+- Noise／jitter statistical model。
+- Density Eye／Bathtub／BER。
+- Preset Sweep／Auto EQ／ranking。
+- Measurement waveform import。
+- Packaging、EXE、Installer。
 
 ---
 
-## Phase 6：Measurement Integration
+# 7. Phase 3：NRZ Sampling & RXEQ
 
-### 目的
+## 7.1 開發順序
 
-建立模擬與實際量測資料之間的橋梁。
+1. Sampling API、manual phase 與 sampling overlay。
+2. Phase sweep 與 objective contract。
+3. CTLE frequency-domain parameter model與 legacy compatibility。
+4. RX FFE manual mode。
+5. DFE tap expansion、contribution 與 decision history。
+6. Teaching CDR：fixed、auto center、early／late、tracking。
+7. NRZ deterministic metrics consolidation。
 
-### 工作項目
+Eye Width、Bathtub 與 BER 不在 sampling 尚未穩定時提前實作。
 
-#### 1. Waveform Import
+## 7.2 Exit Gate
 
-- Generic CSV。
-- Time／Voltage 欄位選擇。
-- Tektronix CSV。
-- Keysight CSV。
-- Differential waveform。
-- UI／Baud rate 設定。
-- Edge alignment。
-
-#### 2. Measured vs Simulated
-
-比較：
-
-- Ideal FIR。
-- Scope-like waveform。
-- Imported waveform。
-- Pulse response。
-- Cursor。
-- Eye。
-- Level。
-- Estimated taps。
-
-#### 3. Tap Extraction
-
-第一版：
-
-- Step／pulse response fitting。
-- Estimate `C-1 / C0 / C+1`。
-- Residual error。
-- Fit quality。
-- Manual fit range。
-
-#### 4. Export
-
-- Waveform CSV。
-- Metrics CSV。
-- Eye PNG。
-- Pulse／cursor CSV。
-- Scenario JSON。
-- Analysis summary Markdown。
-
-### 驗收條件
-
-- 匯入錯誤資料時不造成程式崩潰。
-- 單位、sampling rate 與 UI 定義清楚。
-- 模擬與量測 alignment 可手動修正。
-- Tap extraction 顯示 fit residual 與限制。
-- 所有量測推估結果標示為 estimated。
+- 使用者可以比較 Channel、CTLE、FFE、DFE 各階段。
+- sampling phase 改變會同步更新 waveform、decision 與 metrics。
+- phase sweep 有 deterministic regression cases。
+- DFE taps 對 post-cursor 的影響可由 cursor result 驗證。
+- CDR 清楚標示為 teaching model。
 
 ---
 
-## Phase 7：Product Usability
+# 8. Phase 4：PAM4 RXEQ
 
-### 目的
+## 8.1 開發順序
 
-讓產品具備穩定的場景管理、結果匯出、文件、UX 與日常研究使用能力。
+1. PAM4 pattern／coding contract。
+2. AGC／VGA。
+3. PAM4 CTLE。
+4. RX FFE。
+5. common sampling／CDR phase。
+6. three slicer thresholds。
+7. PAM4 DFE。
+8. threshold optimization。
+9. deterministic SER／decision metrics。
 
-### 工作項目
+PAM4 可以共用 Phase 3 的資料流、sampling 與 result architecture，但不得強迫共用不合理的 NRZ decision algorithm。
 
-#### 1. Scenario Management
+## 8.2 Exit Gate
 
-- 儲存 SimulationConfig（New／Save／Save As／Load）。
-- 固定 random seed 支援與可重現性。
-- 保存 Pattern、TXEQ、Channel、RXEQ 與 Metrics 設定。
-- 場景 JSON schema 版本控管與相容性（migration）。
-- 輸入範圍驗證與未儲存變更警告。
-- A／B 場景比較與 profiles。
-
-#### 2. Export
-
-- 匯出 CSV 資料檔。
-- 匯出 JSON 設定與結果檔。
-- 匯出 Markdown 分析摘要與報告。
-- 匯出 Waveform 與 Eye Diagram 數據。
-- 匯出設定參數與模擬結果 metadata。
-- （不包含 EXE 建置或 Installer 封裝）。
-
-#### 3. 文件
-
-- README。
-- User Guide（使用者指南）。
-- Developer Guide（開發者指南）。
-- Architecture Guide（架構說明）。
-- Model Limitations（模型限制與邊界）。
-- Validation Cases（驗證情境範例）。
-- Release Notes（程式碼版本變更紀錄，不含安裝包）。
-- Glossary（術語表）。
-
-#### 4. UI／UX 穩定化
-
-- 清楚區分 TX、Channel、RX、Metrics 功能分區。
-- Basic／Advanced 操作模式與即時 Tooltips。
-- 錯誤訊息統一格式與輸入範圍提示。
-- Reset 作用範圍一致化。
-- Preset 狀態與目前參數同步顯示。
-- 大型 waveform 模擬之效能與操作回饋（progress／cancel）。
-
-### 驗收條件
-
-- 新使用者可只靠 User Guide 完成基本模擬情境。
-- 所有場景可穩定儲存、載入與跨版本 migration。
-- 匯出 CSV／JSON／Markdown 功能正常且結果可重現。
-- README、版本號與實際程式碼功能一致。
+- TX、Channel、RX、decision views 分離。
+- 三個 thresholds 可手動與自動調整。
+- Upper／Middle／Lower eye 使用共同 phase。
+- reference symbol 輔助模式必須明確標示，不得偽裝為正式 receiver decision。
+- 固定 seed 的 SER regression 通過。
 
 ---
 
-## Phase 8：Advanced Research
+# 9. Phase 5：Signal Impairments & Statistical Metrics
 
-### 候選功能
+## 9.1 目的
 
-- Retimer／Multi-segment Channel。
-- Package、connector 與 via model。
-- Crosstalk matrix。
+在 sampling、decision 與 RXEQ chain 穩定後，再建立具有統計意義的訊號劣化與 metrics。
+
+## 9.2 開發順序
+
+1. AWGN／vertical noise。
+2. deterministic jitter。
+3. random jitter teaching model。
+4. frequency／phase offset。
+5. simplified crosstalk／interference。
+6. density accumulation contract。
+7. Eye Width。
+8. horizontal／vertical bathtub。
+9. BER／SER estimate 與信賴限制說明。
+
+## 9.3 原則
+
+- noise 與 jitter 必須具備固定 seed。
+- error estimate 必須記錄 sample count 與限制。
+- 不得將有限樣本 estimate 描述為 compliance BER。
+- metrics 必須清楚區分 deterministic、measured 與 estimated。
+
+---
+
+# 10. Phase 6：Reproducibility & Experiment Infrastructure
+
+## 10.1 必須建立
+
+- versioned Scenario schema。
+- Pattern、TXEQ、Channel、RXEQ、sampling、threshold、impairment 設定。
+- random seed 與 RNG policy。
+- Experiment Run identity。
+- resolved configuration。
+- result／artifact references。
+- batch result model。
+- CSV／JSON／Markdown export core。
+- schema migration policy。
+
+## 10.2 啟動理由
+
+Auto EQ 與 measurement comparison 都會產生大量可比較結果。若沒有 versioned input 與 result metadata，無法重現或判斷比較是否有效。
+
+完整 GUI 的 New／Save／Load 可在 Phase 9 完成，但 core schema 必須在 Auto EQ 前完成。
+
+---
+
+# 11. Phase 7：Sweep & Auto Equalization
+
+## 11.1 開發順序
+
+1. GUI-independent Preset Resolver。
+2. Sweep request／result model。
+3. NRZ TX Preset sweep。
+4. PAM4 Q Preset sweep。
+5. TX tap sweep。
+6. sampling／CTLE／FFE／DFE／threshold sweep。
+7. heatmap data model與 GUI。
+8. grid search。
+9. coordinate descent。
+10. decision-directed adaptation research。
+11. joint TX／RX optimization。
+
+## 11.2 啟動條件
+
+- objective metrics 已穩定。
+- Scenario／Experiment schema 已完成。
+- sweep 可在 GUI 外執行。
+- 相同設定與 seed 得到相同結果。
+- 長時間工作具備 progress／cancel contract。
+
+## 11.3 用語限制
+
+在模型仍為教學／近似模型時，結果只能描述為：
+
+- highest simulated metric。
+- best result within this configured sweep。
+- teaching-model comparison。
+
+不得直接描述為真實硬體最佳 preset、PCI-SIG 建議或 compliance 結論。
+
+---
+
+# 12. Phase 8：Measurement Integration
+
+依序加入：
+
+1. Generic waveform CSV。
+2. time／voltage／unit validation。
+3. sampling rate／UI／baud contract。
+4. edge alignment。
+5. Tektronix／Keysight adapters。
+6. measured-vs-simulated comparison。
+7. pulse／cursor comparison。
+8. tap extraction。
+9. fit residual、fit quality 與 limitation reporting。
+
+Measurement import 不得直接耦合 GUI；parser、alignment 與 analysis 必須可以獨立測試。
+
+---
+
+# 13. Phase 9：Product Usability & Release
+
+完成：
+
+- Scenario New／Save／Save As／Load UX。
+- A／B comparison。
+- 未儲存變更提示。
+- CSV／JSON／Markdown reports。
+- User Guide。
+- Developer／Architecture Guide。
+- Model Limitations。
+- Validation Cases。
+- Release Notes。
+- Glossary。
+- Basic／Advanced mode。
+- 統一錯誤訊息與輸入提示。
+- 大型工作 progress／cancel UX。
+
+Packaging、EXE、Installer 與防毒誤判仍需另立產品決策，不自動納入本 Phase。
+
+---
+
+# 14. Phase 10：Advanced Research
+
+候選功能：
+
+- Retimer／multi-segment channel。
+- package、connector、via model。
+- crosstalk matrix。
 - Gen6 FEC teaching model。
-- Pre-FEC／Post-FEC error view。
+- pre-FEC／post-FEC error view。
 - RLM／SNDR approximation。
-- More advanced CDR。
+- advanced CDR。
 - PCIe Gen7 profile。
 - Batch CLI。
-- Python API。
-- Plugin architecture。
-- Hardware measurement automation interface。
+- public Python API stabilization。
+- plugin architecture。
+- hardware measurement automation interface。
 
-### 啟動條件
-
-此階段只有在以下條件完成後才開始：
+啟動條件：
 
 - Core architecture 穩定。
-- NRZ RXEQ 完成。
-- PAM4 RXEQ 完成。
+- NRZ 與 PAM4 RXEQ 完成。
 - Scenario format 穩定。
-- 自動測試覆蓋核心模型。
+- 統計 metrics 有明確限制與 regression。
+- Auto EQ 可重現。
 - 至少有一個穩定公開版本。
 
 ---
 
-# 8. 建議版本策略
+## 15. 所有 PR 的 Merge Gate
 
-| 建議版本 | 主要範圍 |
-|---|---|
-| `0.x-refactor` | Baseline、模組化、測試與 pipeline |
-| `0.x-channel` | Pattern、Pulse、Cursor、Impulse、Touchstone |
-| `0.x-nrz-rxeq` | CDR、CTLE、FFE、DFE、NRZ metrics |
-| `0.x-pam4-rxeq` | PAM4 RXEQ、threshold、SER／BER |
-| `0.x-auto-eq` | Sweep、Heatmap、Auto adaptation |
-| `0.x-measurement` | CSV import、comparison、tap extraction |
-| `1.0` | 穩定教學版、文件完整、場景可重現 |
+每個 PR 必須提供：
 
-版本號可依目前專案實際版本調整，但每個版本只應承擔一個主要產品主題。
+- Related Roadmap Issue。
+- Scope／non-scope。
+- unit tests。
+- module-boundary tests。
+- regression count。
+- GitHub Actions run。
+- `python -c "import main"`。
+- 涉及 GUI 時的 startup／interaction smoke evidence。
+- `git diff --check`。
+- value／shape／dtype compatibility 說明。
+- RNG state／seed compatibility 說明。
+- public import surface 說明。
+- 模擬數學與 GUI 行為是否改變。
+- known limitations。
+
+禁止：
+
+- 以轉型、rounding 或重新計算掩蓋 baseline 差異。
+- 為了讓測試通過而弱化 expected values、tolerance 或 assertions。
+- 在同一 PR 混入不相干重構、UI redesign 或 packaging。
+- 未經明確規劃提前實作後續 Phase。
 
 ---
 
-# 9. 開發工作流程
+## 16. 立即下一步
 
-## 9.1 Issue 分類
+### 目前 Merge Gate
 
-建議使用以下 labels：
+PR #50 必須先修正並重新驗證 GUI `symbols` dtype contract；在問題解決前，不得合併，也不得將 Implementation 22 標示為 Completed。
 
-- `type:feature`
-- `type:refactor`
-- `type:bug`
-- `type:test`
-- `type:docs`
-- `type:research`
-- `area:tx`
-- `area:channel`
-- `area:rx`
-- `area:metrics`
-- `area:pam4`
-- `area:ui`
-- `area:release`
-- `priority:P0`
-- `priority:P1`
-- `priority:P2`
-- `status:blocked`
-- `status:needs-validation`
+### PR #50 通過後
 
-## 9.2 每個 Feature Issue 必須包含
-
-- 背景。
-- 使用者問題。
-- 產品目標。
-- 範圍。
-- 非範圍。
-- UI 行為。
-- 模型定義。
-- 輸入／輸出。
-- 驗收條件。
-- 測試案例。
-- 文件需求。
-- 已知限制。
-- 相依 Issue。
-
-## 9.3 Branch 建議
+下一個 Implementation 應為：
 
 ```text
-refactor/<topic>
-feature/<topic>
-fix/<topic>
-docs/<topic>
-test/<topic>
+Implementation 23: Add deterministic PRBS generator core
 ```
 
-## 9.4 Pull Request 必須包含
+工作只包含 GUI-independent PRBS7／9／15／23／31、明確 polynomial／seed convention、hardcoded golden vectors 與 boundary tests。
 
-- 變更摘要。
-- 為何需要。
-- 影響模組。
-- Before／After。
-- 測試證據。
-- Baseline 比較。
-- UI screenshot 或 waveform 比較。
-- 已知限制。
-- 後續工作。
+不得在 Implementation 23 同時加入：
 
----
+- Pattern selector GUI。
+- Channel model。
+- Cursor analysis。
+- Scenario storage。
+- Auto EQ。
 
-# 10. Definition of Done
-
-一個功能只有在以下條件全部完成後才算 Done：
-
-- 功能符合 Issue 驗收條件。
-- 核心運算不直接依賴 GUI。
-- 已加入單元測試。
-- 已加入至少一個 regression case。
-- Invalid input 有錯誤處理。
-- 不會破壞既有 baseline。
-- UI 有清楚標籤與 tooltip。
-- README 或 User Guide 已更新。
-- 教學模型與近似限制已標示。
-- PR 已完成 review。
-- Windows build smoke test 通過。
-- Release notes 已記錄使用者可見變更。
-
----
-
-# 11. 測試策略
-
-## 11.1 Unit Tests
-
-- Tap conversion。
-- TX FIR。
-- PAM4 FIR。
-- Channel convolution。
-- CTLE response。
-- FFE。
-- DFE sign convention。
-- Slicer。
-- Sampling phase。
-- Eye metrics。
-- BER／SER。
-- Scenario serialization。
-
-## 11.2 Golden Vector Tests
-
-對固定輸入保存預期輸出：
-
-- TX symbols。
-- Waveform。
-- Cursor。
-- Sample values。
-- Decisions。
-- Metrics。
-
-## 11.3 Property Tests
-
-例如：
-
-- No EQ 時 main tap 不應被改變。
-- Identity Channel 應保持 waveform。
-- DFE tap 為零時不應改變 sample。
-- PAM4 threshold 必須保持順序。
-- 相同 seed 必須產生相同結果。
-
-## 11.4 GUI Smoke Tests
-
-- 啟動。
-- 切換 tab。
-- Preset。
-- Slider。
-- Text input。
-- Reset。
-- Load／Save。
-- Long-running sweep cancel。
-- Invalid file import。
-
-## 11.5 Performance Tests
-
-- GUI redraw latency。
-- Eye trace rendering。
-- Density Eye。
-- Large pattern。
-- Touchstone convolution。
-- Preset sweep。
-- Memory usage。
-
----
-
-# 12. 主要風險與對策
-
-| 風險 | 影響 | 對策 |
-|---|---|---|
-| 重整時改變原本結果 | 高 | 先建立 baseline 與 golden vectors |
-| 模型越做越像 compliance，但不夠準確 | 高 | 清楚標示 educational approximation |
-| GUI 與模型再次耦合 | 高 | 所有新功能必須先有非 GUI API |
-| Auto EQ 過度補償 | 高 | 加入 noise、tap limits 與多目標 metrics |
-| PAM4 複雜度快速增加 | 高 | 先完成 common CDR 與 threshold，再加入 adaptive DFE |
-| Touchstone 匯入格式不一致 | 中 | 限定支援格式並提供 validation |
-| 即時繪圖變慢 | 中 | 分離計算頻率與繪圖頻率、使用背景工作與取消 |
-| 版本場景不相容 | 中 | JSON schema version 與 migration |
-| README 落後於實作 | 中 | 文件列入 Definition of Done |
-
----
-
-# 13. 優先級總表
-
-## P0：必須先完成
-
-- Baseline Freeze。
-- Core Refactor。
-- 統一 Simulation Pipeline。
-- 單元測試與 Regression Tests。
-- Pattern Generator。
-- Pulse／Cursor Analysis。
-- Channel Engine。
-- Sampling Phase。
-- CDR 基礎。
-- NRZ CTLE／FFE／DFE 完整化。
-- PAM4 RXEQ。
-- 正確的 Eye／Margin／BER／SER metrics。
-
-## P1：完成核心產品後加入
-
-- Density Eye。
-- Bathtub。
-- Sweep。
-- Heatmap。
-- Auto Equalization。
-- Link Equalization Visualizer。
-- 示波器 CSV 匯入。
-- Measured vs Simulated。
-- Tap extraction。
-- Scenario Save／Load。
-- 匯出與報告。
-- 完整 User Guide。
-
-## P2：延後研究
-
-- FEC。
-- Retimer。
-- SNDR／RLM approximation。
-- Gen7。
-- 完整 compliance-like reference receiver。
-- Hardware automation。
-- Plugin system。
-
----
-
-# 14. 下一步執行清單
-
-建議立即建立以下工作：
-
-1. 建立 `Roadmap` 與 `Architecture Refactor` milestone。
-2. 建立目前穩定版 tag。
-3. 建立 10 組 Baseline Cases。
-4. 更新 README，使 TXEQ／RXEQ 現況一致。
-5. 建立 `models.py`。
-6. 抽離 `tx_eq.py`。
-7. 抽離 `channel.py`。
-8. 抽離 `rx_eq.py`。
-9. 抽離 `metrics.py`。
-10. 建立 `pipeline.py`。
-11. 為每個模組建立單元測試。
-12. 完成 baseline regression。
-13. 再開始 Pulse／Cursor Analysis。
-
----
-
-# 15. 產品決策摘要
-
-PCIE-TX-EQ-Simulator 後續開發的核心策略是：
-
-> **先讓架構可維護，再讓模型更完整；先讓結果可重現，再增加自動化；先完成 Gen1～Gen6 教學流程，再考慮 Gen7 與 compliance-like 功能。**
-
-第一個正式開發主題不是新增更多滑桿，而是：
-
-> **Baseline Freeze + Core Refactor + Simulation Pipeline**
-
-此階段完成後，Channel、CDR、PAM4 RXEQ、自動 Equalization 與量測資料整合才有穩定的開發基礎。
+完成 PRBS core 後，再建立 Pattern Configuration Contract，之後才進入 Channel interface 與 impulse convolution。
