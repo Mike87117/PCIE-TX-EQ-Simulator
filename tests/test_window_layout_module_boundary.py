@@ -80,13 +80,25 @@ def test_window_ast_init_ui_and_pam4_tab_delegation():
     assert len(init_ui_node.body) == 1
     assert isinstance(init_ui_node.body[0], ast.Expr)
     assert isinstance(init_ui_node.body[0].value, ast.Call)
-    assert init_ui_node.body[0].value.func.id == "build_main_window_ui"
+    init_ui_call = init_ui_node.body[0].value
+    assert isinstance(init_ui_call.func, ast.Name)
+    assert init_ui_call.func.id == "build_main_window_ui"
+    assert len(init_ui_call.args) == 1
+    assert isinstance(init_ui_call.args[0], ast.Name)
+    assert init_ui_call.args[0].id == "self"
+    assert len(init_ui_call.keywords) == 0
 
     # Verify init_pam4_tab body calls build_pam4_tab(self)
     assert len(init_pam4_tab_node.body) == 1
     assert isinstance(init_pam4_tab_node.body[0], ast.Expr)
     assert isinstance(init_pam4_tab_node.body[0].value, ast.Call)
-    assert init_pam4_tab_node.body[0].value.func.id == "build_pam4_tab"
+    pam4_call = init_pam4_tab_node.body[0].value
+    assert isinstance(pam4_call.func, ast.Name)
+    assert pam4_call.func.id == "build_pam4_tab"
+    assert len(pam4_call.args) == 1
+    assert isinstance(pam4_call.args[0], ast.Name)
+    assert pam4_call.args[0].id == "self"
+    assert len(pam4_call.keywords) == 0
 
 
 def test_window_layout_composition_contracts(qapp):
