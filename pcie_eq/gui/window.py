@@ -59,6 +59,7 @@ from pcie_eq.gui.window_helpers import WindowUiHelpersMixin
 from pcie_eq.gui.random_data import pam4_symbols_from_random
 from pcie_eq.gui.preset_debug import validate_gen6_presets
 from pcie_eq.gui.window_state import initialize_window_state
+from pcie_eq.gui.window_layout import build_main_window_ui
 
 __all__ = [
     "BIT_COUNT",
@@ -104,18 +105,7 @@ class PCIeTxEqSimulator(
         self.pam4_full_refresh()
 
     def init_ui(self):
-        root = QWidget()
-        root_layout = QVBoxLayout(root)
-        self.tabs = QTabWidget()
-        self.nrz_tab = QWidget()
-        self.pam4_tab = QWidget()
-        self.tabs.addTab(self.nrz_tab, "PCIe Gen1~5 NRZ TX EQ")
-        self.tabs.addTab(self.pam4_tab, "PCIe Gen6 PAM4 TX EQ")
-        root_layout.addWidget(self.tabs)
-
-        build_nrz_tab(self)
-        self.init_pam4_tab()
-        self.setCentralWidget(root)
+        build_main_window_ui(self)
 
     def init_pam4_tab(self):
         build_pam4_tab(self)
