@@ -58,6 +58,7 @@ from pcie_eq.gui.pam4_controller import Pam4ControllerMixin
 from pcie_eq.gui.window_helpers import WindowUiHelpersMixin
 from pcie_eq.gui.random_data import pam4_symbols_from_random
 from pcie_eq.gui.preset_debug import validate_gen6_presets
+from pcie_eq.gui.window_state import initialize_window_state
 
 __all__ = [
     "BIT_COUNT",
@@ -96,50 +97,7 @@ class PCIeTxEqSimulator(
         self.setWindowTitle("PCIe TX/RX EQ Teaching Simulator")
         self.resize(1200, 850)
 
-        self.syncing_ui = False
-        self.control_mode = "db"
-        self.current_preset = "Custom"
-        self.channel_alpha_current = 0.08
-
-        self.pre_db_current = 1.5
-        self.de_db_current = -3.5
-        self.cm1_current, self.cp1_current = db_to_taps(
-            pre_db=self.pre_db_current,
-            de_db=self.de_db_current
-        )
-        self.rx_view_mode = "Channel (Before RX EQ)"
-        self.ctle_boost_current = 0.0
-        self.dfe_tap1_current = 0.0
-        self.dfe_tap2_current = 0.0
-        self.dfe_tap3_current = 0.0
-        self.eye_metrics = {
-            "eye_height": 0.0,
-            "eye_max": 0.0,
-            "eye_min": 0.0,
-            "center_spread": 0.0,
-        }
-        self.bits = bits.copy()
-        self.symbols = symbols.copy()
-
-        self.realtime_eye_timer = QElapsedTimer()
-        self.realtime_eye_timer.start()
-
-        self.gen6_preset_current = "Q0"
-        self.pam4_cm2_current = 0.0
-        self.pam4_cm1_current = 0.0
-        self.pam4_cp1_current = 0.0
-        self.pam4_alpha_current = 0.08
-        self.pam4_eye_mode = "raw"
-        self.pam4_t_center_phase = SPB // 2
-        self.pam4_t_center_score = 0.0
-        self.pam4_symbols = pam4_symbols_from_random(PAM4_SYMBOL_COUNT)
-        self.pam4_eye_metrics = {
-            "upper_eye": 0.0,
-            "middle_eye": 0.0,
-            "lower_eye": 0.0,
-            "minimum_eye": 0.0,
-            "center_spread": 0.0,
-        }
+        initialize_window_state(self, bits, symbols)
 
         self.init_ui()
         self.full_refresh()
