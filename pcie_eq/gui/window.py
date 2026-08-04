@@ -23,7 +23,7 @@ from pcie_eq.gui.nrz_controller import NrzControllerMixin
 from pcie_eq.gui.pam4_controller import Pam4ControllerMixin
 from pcie_eq.gui.window_helpers import WindowUiHelpersMixin
 from pcie_eq.gui.random_data import pam4_symbols_from_random
-from pcie_eq.patterns import generate_random_nrz_bits, nrz_bits_to_symbols
+from pcie_eq.patterns import generate_random_nrz_bits
 from pcie_eq.gui.preset_debug import validate_gen6_presets
 from pcie_eq.gui.window_state import initialize_window_state
 from pcie_eq.gui.window_layout import build_main_window_ui
@@ -46,7 +46,7 @@ __all__ = [
 
 np.random.seed(7)
 bits = generate_random_nrz_bits(BIT_COUNT)
-symbols = nrz_bits_to_symbols(bits)
+symbols = 2 * bits - 1
 
 
 # =========================

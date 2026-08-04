@@ -261,16 +261,63 @@ def test_unseeded_global_rng_equivalence():
         np.random.set_state(initial_state)
 
 
+import sys
+from PyQt5.QtWidgets import QApplication
+from pcie_eq.gui.constants import BIT_COUNT
+from main import PCIeTxEqSimulator
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    """Reusable QApplication instance fixture for GUI testing."""
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+    yield app
+
+
 def test_gui_window_bits_and_symbols_fingerprints():
-    """Verify window.bits and window.symbols static fingerprints match baseline."""
+    """Verify window.bits and window.symbols static raw-byte fingerprints and integer dtype contracts match baseline."""
     from pcie_eq.gui import window
 
-    bits_digest = hashlib.sha256(
-        np.asarray(window.bits, dtype="<i8").tobytes()
-    ).hexdigest()
-    assert bits_digest == "2493782381dbfd8df3986df590e95feeb0fa20afa76105f5d1a2b38a559f5392"
+    assert window.bits.ndim == 1
+    assert window.symbols.ndim == 1
+    assert np.issubdtype(window.bits.dtype, np.integer)
+    assert np.issubdtype(window.symbols.dtype, np.integer)
+    assert window.symbols.dtype == window.bits.dtype
+    assert np.array_equal(window.symbols, 2 * window.bits - 1)
 
-    symbols_digest = hashlib.sha256(
-        np.asarray(window.symbols, dtype="<i8").tobytes()
-    ).hexdigest()
-    assert symbols_digest == "3ea421d4936ab544f825032d24ee5a164fc656bb66cc362a3c81e208d2c1d091"
+    bits_bytes = np.ascontiguousarray(window.bits).tobytes()
+    bits_digest = hashlib.sha256(bits_bytes).hexdigest()
+    if window.bits.dtype == np.int32:
+        expected_bits_sha = "aac8c321ab4dc0aa718baa06e8c2d4ba106110ca10b265decb78637cf3195285"
+    else:
+        expected_bits_sha = "2493782381dbfd8df3986df590e95feeb0fa20afa76105f5d1a2b38a559f5392"
+    assert bits_digest == expected_bits_sha, f"bits SHA mismatch: got {bits_digest}, expected {expected_bits_sha}"
+
+    symbols_bytes = np.ascontiguousarray(window.symbols).tobytes()
+    symbols_digest = hashlib.sha256(symbols_bytes).hexdigest()
+    if window.symbols.dtype == np.int32:
+        expected_symbols_sha = "35d846fbff0bdf1e22005844f6a5e08ace72e2be951bbd439745e064464ebb1a"
+    else:
+        expected_symbols_sha = "3ea421d4936ab544f825032d24ee5a164fc656bb66cc362a3c81e208d2c1d091"
+    assert symbols_digest == expected_symbols_sha, f"symbols SHA mismatch: got {symbols_digest}, expected {expected_symbols_sha}"
+
+
+def test_gui_on_generate_new_waveform_dtype_and_state_contracts(qapp):
+    """Verify on_generate_new_waveform maintains integer bits/symbols dtype, array shapes, and equivalent conversion."""
+    win = PCIeTxEqSimulator()
+    try:
+        win.on_generate_new_waveform()
+
+        assert win.bits.ndim == 1
+        assert win.symbols.ndim == 1
+        assert win.bits.shape == (BIT_COUNT,)
+        assert win.symbols.shape == (BIT_COUNT,)
+
+        assert np.issubdtype(win.bits.dtype, np.integer)
+        assert np.issubdtype(win.symbols.dtype, np.integer)
+        assert win.symbols.dtype == win.bits.dtype
+        assert np.array_equal(win.symbols, 2 * win.bits - 1)
+    finally:
+        win.close()

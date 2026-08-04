@@ -91,7 +91,6 @@ def test_window_import_surface_ast_allowlist():
         ("pcie_eq.gui.window_helpers", "WindowUiHelpersMixin"),
         ("pcie_eq.gui.random_data", "pam4_symbols_from_random"),
         ("pcie_eq.patterns", "generate_random_nrz_bits"),
-        ("pcie_eq.patterns", "nrz_bits_to_symbols"),
         ("pcie_eq.gui.preset_debug", "validate_gen6_presets"),
         ("pcie_eq.gui.window_state", "initialize_window_state"),
         ("pcie_eq.gui.window_layout", "build_main_window_ui"),
@@ -130,16 +129,30 @@ def test_pcie_tx_eq_simulator_class_identity_and_mro():
 
 
 def test_bits_and_symbols_fingerprints():
-    """Verify array properties and static SHA-256 fingerprints for module-level bits and symbols arrays."""
+    """Verify array properties and static raw-byte SHA-256 fingerprints for module-level bits and symbols arrays."""
+    assert window.bits.ndim == 1
+    assert window.symbols.ndim == 1
     assert window.bits.shape == (window.BIT_COUNT,)
     assert window.symbols.shape == (window.BIT_COUNT,)
+    assert np.issubdtype(window.bits.dtype, np.integer)
+    assert np.issubdtype(window.symbols.dtype, np.integer)
+    assert window.symbols.dtype == window.bits.dtype
+    assert np.array_equal(window.symbols, 2 * window.bits - 1)
     assert window.bits is not window.symbols
     assert not np.shares_memory(window.bits, window.symbols)
 
-    bits_sha = hashlib.sha256(np.asarray(window.bits, dtype="<i8").tobytes()).hexdigest()
-    expected_bits_sha = "2493782381dbfd8df3986df590e95feeb0fa20afa76105f5d1a2b38a559f5392"
+    bits_bytes = np.ascontiguousarray(window.bits).tobytes()
+    bits_sha = hashlib.sha256(bits_bytes).hexdigest()
+    if window.bits.dtype == np.int32:
+        expected_bits_sha = "aac8c321ab4dc0aa718baa06e8c2d4ba106110ca10b265decb78637cf3195285"
+    else:
+        expected_bits_sha = "2493782381dbfd8df3986df590e95feeb0fa20afa76105f5d1a2b38a559f5392"
     assert bits_sha == expected_bits_sha, f"bits SHA mismatch: got {bits_sha}, expected {expected_bits_sha}"
 
-    symbols_sha = hashlib.sha256(np.asarray(window.symbols, dtype="<i8").tobytes()).hexdigest()
-    expected_symbols_sha = "3ea421d4936ab544f825032d24ee5a164fc656bb66cc362a3c81e208d2c1d091"
+    symbols_bytes = np.ascontiguousarray(window.symbols).tobytes()
+    symbols_sha = hashlib.sha256(symbols_bytes).hexdigest()
+    if window.symbols.dtype == np.int32:
+        expected_symbols_sha = "35d846fbff0bdf1e22005844f6a5e08ace72e2be951bbd439745e064464ebb1a"
+    else:
+        expected_symbols_sha = "3ea421d4936ab544f825032d24ee5a164fc656bb66cc362a3c81e208d2c1d091"
     assert symbols_sha == expected_symbols_sha, f"symbols SHA mismatch: got {symbols_sha}, expected {expected_symbols_sha}"

@@ -18,7 +18,7 @@ from pcie_eq.tx_eq import (
 from pcie_eq.metrics import calculate_eye_metrics
 from pcie_eq.models import NrzSimulationConfig
 from pcie_eq.pipeline import run_simulation
-from pcie_eq.patterns import generate_random_nrz_bits, nrz_bits_to_symbols
+from pcie_eq.patterns import generate_random_nrz_bits
 from pcie_eq.gui.constants import (
     BIT_COUNT,
     SPB,
@@ -291,7 +291,7 @@ class NrzControllerMixin:
             if not active:
                 return
             self.bits = generate_random_nrz_bits(BIT_COUNT)
-            self.symbols = nrz_bits_to_symbols(self.bits)
+            self.symbols = 2 * self.bits - 1
             self.redraw_all()
 
     def on_reset_no_eq(self):
