@@ -49,14 +49,15 @@ def test_pam4_controller_mixin_location_and_inheritance():
     assert Pam4ControllerMixin.__bases__ == (object,)
     assert issubclass(PCIeTxEqSimulator, NrzControllerMixin)
     assert issubclass(PCIeTxEqSimulator, Pam4ControllerMixin)
-    assert issubclass(PCIeTxEqSimulator, QMainWindow)
-    assert PCIeTxEqSimulator.__mro__ == (
+    from pcie_eq.gui.window_helpers import WindowUiHelpersMixin
+    assert PCIeTxEqSimulator.__mro__[:4] == (
         PCIeTxEqSimulator,
         NrzControllerMixin,
         Pam4ControllerMixin,
-        QMainWindow,
-        object,
-    ) or issubclass(PCIeTxEqSimulator, (NrzControllerMixin, Pam4ControllerMixin, QMainWindow))
+        WindowUiHelpersMixin,
+    )
+    assert QMainWindow in PCIeTxEqSimulator.__mro__
+    assert PCIeTxEqSimulator.__mro__.index(WindowUiHelpersMixin) < PCIeTxEqSimulator.__mro__.index(QMainWindow)
 
 
 def test_pam4_controller_ast_no_forbidden_imports():

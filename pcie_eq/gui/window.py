@@ -7,7 +7,6 @@ Source authority: main.py @ commit bb6f9d956f5d61201b8a134b1016437a6de5156e
 
 import sys
 import numpy as np
-from contextlib import contextmanager
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QSlider, QLineEdit, QPushButton, QComboBox,
@@ -58,6 +57,7 @@ from pcie_eq.gui.nrz_tab import build_nrz_tab
 from pcie_eq.gui.pam4_tab import build_pam4_tab
 from pcie_eq.gui.nrz_controller import NrzControllerMixin
 from pcie_eq.gui.pam4_controller import Pam4ControllerMixin
+from pcie_eq.gui.window_helpers import WindowUiHelpersMixin
 from pcie_eq.gui.random_data import pam4_symbols_from_random
 
 __all__ = [
@@ -133,7 +133,12 @@ def validate_gen6_presets():
 # Main GUI
 # =========================
 
-class PCIeTxEqSimulator(NrzControllerMixin, Pam4ControllerMixin, QMainWindow):
+class PCIeTxEqSimulator(
+    NrzControllerMixin,
+    Pam4ControllerMixin,
+    WindowUiHelpersMixin,
+    QMainWindow,
+):
     def __init__(self):
         super().__init__()
 
@@ -205,53 +210,3 @@ class PCIeTxEqSimulator(NrzControllerMixin, Pam4ControllerMixin, QMainWindow):
 
     def init_pam4_tab(self):
         build_pam4_tab(self)
-
-    def make_slider(self, name, minimum, maximum, value):
-        layout = QHBoxLayout()
-
-        name_label = QLabel(name)
-        name_label.setFixedWidth(120)
-
-        slider = QSlider(Qt.Horizontal)
-        slider.setMinimum(minimum)
-        slider.setMaximum(maximum)
-        slider.setValue(value)
-
-        value_edit = QLineEdit()
-        value_edit.setFixedWidth(80)
-        value_edit.setAlignment(Qt.AlignRight)
-
-        layout.addWidget(name_label)
-        layout.addWidget(slider)
-        layout.addWidget(value_edit)
-
-        return {
-            "layout": layout,
-            "slider": slider,
-            "edit": value_edit
-        }
-
-    @contextmanager
-    def ui_sync(self):
-        if self.syncing_ui:
-            yield False
-            return
-        self.syncing_ui = True
-        try:
-            yield True
-        finally:
-            self.syncing_ui = False
-
-    def set_slider_value_silent(self, slider, value):
-        slider.blockSignals(True)
-        try:
-            slider.setValue(value)
-        finally:
-            slider.blockSignals(False)
-
-    def set_edit_text_silent(self, edit, text):
-        edit.blockSignals(True)
-        try:
-            edit.setText(text)
-        finally:
-            edit.blockSignals(False)
