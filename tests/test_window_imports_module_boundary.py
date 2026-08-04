@@ -90,6 +90,8 @@ def test_window_import_surface_ast_allowlist():
         ("pcie_eq.gui.pam4_controller", "Pam4ControllerMixin"),
         ("pcie_eq.gui.window_helpers", "WindowUiHelpersMixin"),
         ("pcie_eq.gui.random_data", "pam4_symbols_from_random"),
+        ("pcie_eq.patterns", "generate_random_nrz_bits"),
+        ("pcie_eq.patterns", "nrz_bits_to_symbols"),
         ("pcie_eq.gui.preset_debug", "validate_gen6_presets"),
         ("pcie_eq.gui.window_state", "initialize_window_state"),
         ("pcie_eq.gui.window_layout", "build_main_window_ui"),
