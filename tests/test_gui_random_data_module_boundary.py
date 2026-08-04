@@ -9,6 +9,7 @@ Verifies:
 """
 
 import ast
+import hashlib
 import pathlib
 import numpy as np
 
@@ -33,6 +34,14 @@ def test_pam4_symbols_from_random_values():
 
         np.random.seed(42)
         symbols = random_data.pam4_symbols_from_random(512)
+
+        sequence_digest = hashlib.sha256(
+            np.asarray(symbols, dtype="<f8").tobytes()
+        ).hexdigest()
+
+        assert sequence_digest == (
+            "910399f7a1adf6e1248db292e579d5a46b9704eb072d4001982d1863ef1c122a"
+        )
 
         np.random.seed(42)
         repeat_symbols = random_data.pam4_symbols_from_random(512)
