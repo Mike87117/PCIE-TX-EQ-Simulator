@@ -99,8 +99,8 @@ Draft PR、未合併 branch、本機結果與未驗證網路資料不能當成�
 ### 4.1 Production code baseline
 
 ```text
-latest production-code merge: 3812ef850523d4dabbcf33ad1e056bc140c2b45f
-regression baseline: 182 tests
+latest production-code merge: c4fd8c8191919c30d8e28383d94804fe3e68db25
+regression baseline: 192 tests
 CI: GitHub Actions / Windows / Python 3.11
 ```
 
@@ -135,12 +135,27 @@ Implementation 22／Issue #49／PR #50 已完成：
 - PAM4 random compatibility wrapper。
 - GUI RNG、value、shape、dtype 與 raw-byte compatibility。
 
+#### Phase 2 / Step 2.2：PRBS Core — Completed
+
+Implementation 23／Issue #54／PR #56 已完成：
+
+- `docs/PRBS_CONVENTION.md` 已由 PR #55 先行凍結規格。
+- 新增 deterministic PRBS7／9／15／23／31 pure core。
+- Convention ID：`pcie_eq-prbs-fibonacci-lsb-v1`。
+- 支援 default all-ones 與 valid custom initial state。
+- Exact output contract：一維 `numpy.int8`、值只含 `0 / 1`。
+- 五種 order 具 hardcoded golden-prefix tests。
+- PRBS7／9／15 具完整 maximal-period state traversal。
+- PRBS23／31 具獨立 recurrence、custom-state、repeatability 與 prefix consistency validation。
+- NumPy global RNG isolation、validation 與 module-boundary tests 通過。
+- 未修改 GUI、pipeline、Preset 或 simulation math。
+
 ### 4.3 目前實際模型限制
 
 - `pcie_eq.channel.simple_channel()` 仍是一階遞迴低通 Teaching approximation。
 - 現有 CTLE 與 DFE 是簡化教學模型，不是 PCIe Gen-specific Reference Receiver。
 - 現有 Eye／Margin metrics 是近似指標，不是 compliance metrics。
-- 尚無 PRBS、impulse convolution、Touchstone、完整 sampling／RXEQ、統計 BER 或量測相關性。
+- 尚無 Pattern Configuration Contract、impulse convolution、Touchstone、完整 sampling／RXEQ、統計 BER 或量測相關性。
 
 ---
 
@@ -212,43 +227,31 @@ Evidence Gate
 
 Implementation 22 已完成。
 
-## 7.3 Step 2.2：PRBS Core — Planned / Next
+## 7.3 Step 2.2：PRBS Core — Completed
 
-Implementation 23 可開始，因為 PRBS polynomial 有 AMD、Tektronix 與 ITU-T 等公開資料基礎。
+Implementation 23／Issue #54／PR #56 已完成。
 
-第一版支援：
+規格與實作依據：
 
-- PRBS7：`1 + x^6 + x^7`。
-- PRBS9：`1 + x^5 + x^9`。
-- PRBS15：`1 + x^14 + x^15`。
-- PRBS23：`1 + x^18 + x^23`。
-- PRBS31：`1 + x^28 + x^31`。
-
-但 polynomial 不足以唯一決定 bit sequence。Issue 必須固定：
-
-- Fibonacci 或 Galois LFSR。
-- left／right shift。
-- MSB／LSB output。
-- feedback timing。
-- state bit ordering。
-- inversion convention。
-- first output bit。
-- default／custom initial state。
+- `docs/PRBS_CONVENTION.md`。
+- Convention ID：`pcie_eq-prbs-fibonacci-lsb-v1`。
+- PRBS7／9／15／23／31 polynomial 與 nominal period 由公開來源交叉確認。
+- Fibonacci LFSR、right shift、LSB output、output-before-update 與 non-inverted polarity 已凍結。
+- Default initial state 為 all ones；zero state 與超出 order 範圍的 state 會拒絕。
 
 Validation：
 
-- independent hardcoded golden prefixes。
-- PRBS7／9 full-period tests。
-- PRBS15 full-period 或等價 recurrence validation。
-- PRBS23／31 prefix、recurrence 與 state-transition tests。
-- zero state、unsupported order、invalid count／state validation。
-- 不讀取或修改 NumPy global RNG。
+- 五種 order 的 all-ones 與 custom-state hardcoded golden prefixes。
+- PRBS7／9／15 full-period nonzero-state traversal。
+- PRBS23／31 test-side independent recurrence 與 custom-state comparisons。
+- deterministic repeatability、prefix consistency、dtype／shape／value contract。
+- NumPy global RNG isolation與 module-boundary tests。
 
-模型等級：**Reference-model-derived general test pattern**。不得自動稱為 PCIe compliance pattern。
+模型等級：**Reference-model-derived general test pattern**。不得稱為 PCIe compliance pattern、PCI-SIG Reference Pattern，或指定硬體 BERT 的 bit-exact phase。
 
-非範圍：GUI selector、PatternConfig、Channel、Cursor、Scenario、Preset Sweep、Auto EQ。
+PRBS Core 目前只提供 pure API；GUI selector 與 PatternConfig 尚未加入。
 
-## 7.4 Step 2.3：Pattern Configuration Contract
+## 7.4 Step 2.3：Pattern Configuration Contract — Planned / Next Evidence Gate
 
 建立 GUI-independent pattern request／configuration：
 
@@ -287,7 +290,7 @@ impulse_response
 - normalization。
 - truncation／padding。
 
-使用分析解與固定 impulse golden cases 驗證。
+使用分析解與固定 impulse golden cases驗證。
 
 ## 7.7 Step 2.6：Synthetic / User-defined Impulse
 
@@ -549,17 +552,28 @@ Packaging、EXE、Installer 與防毒誤判仍需另立產品決策。
 
 ## 17. 立即下一步
 
-### Implementation 23：Add deterministic PRBS generator core
+### Implementation 24：Define Pattern Configuration Contract
 
-Implementation 23 是目前唯一已通過可行性審查的下一個功能。
+下一項工作是由 Planner／Reviewer先完成 Pattern Configuration 的 Evidence Gate 與文件，不直接交付 code implementation。
 
-開始前必須建立／更新 Issue，內容包含：
+資料基礎：
 
-- AMD／Tektronix／ITU-T 等選定資料來源。
-- polynomial table。
-- 完整 LFSR convention。
-- independent hardcoded golden prefixes。
-- period／recurrence validation plan。
-- general PRBS test pattern 的模型聲明。
+- 已合併的 `pcie_eq.patterns` public API。
+- 已合併的 `docs/PRBS_CONVENTION.md`。
+- 既有 NRZ／PAM4 random、deterministic pattern 與 dtype compatibility tests。
+- Pattern Configuration 是本產品內部 software contract，不以名稱猜測 PCIe compliance pattern。
 
-完成後依序進入 Pattern Configuration、Channel Interface、Impulse Convolution、Synthetic／User Impulse 與 Cursor Analysis。每一步仍須個別通過 Evidence Gate。
+開始 code 前必須先凍結：
+
+- pattern type taxonomy 與 versioning。
+- bit／symbol domain、modulation 與 count semantics。
+- random seed、PRBS order／state／convention ID。
+- deterministic pattern parameters。
+- user-defined bit／symbol validation。
+- resolved request／result shape、dtype、ordering 與 error contract。
+- round-trip、validation matrix 與 independent expected cases。
+- allowed／forbidden claims 與 GUI／Channel non-scope。
+
+文件由 Planner／Reviewer建立並先合併；Gemini 只在文件凍結後負責 pure code 與 tests。
+
+完成 Pattern Configuration 後，再依序進入 Channel Interface、Impulse Convolution、Synthetic／User Impulse 與 Cursor Analysis。每一步仍須個別通過 Evidence Gate。
