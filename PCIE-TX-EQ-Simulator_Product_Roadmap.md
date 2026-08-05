@@ -290,7 +290,7 @@ impulse_response
 - normalization。
 - truncation／padding。
 
-使用分析解與固定 impulse golden cases驗證。
+使用分析解與固定 impulse golden cases 驗證。
 
 ## 7.7 Step 2.6：Synthetic / User-defined Impulse
 
