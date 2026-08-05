@@ -150,12 +150,27 @@ Implementation 23／Issue #54／PR #56 已完成：
 - NumPy global RNG isolation、validation 與 module-boundary tests 通過。
 - 未修改 GUI、pipeline、Preset 或 simulation math。
 
+#### Phase 2 / Step 2.3A：Pattern Configuration Contract — Completed
+
+Implementation 24／Issue #58／PR #59 已完成：
+
+- 新增 `docs/PATTERN_CONFIGURATION_CONTRACT.md`。
+- Contract ID：`pcie_eq-pattern-config-v1`。
+- 凍結 11 種 exact pattern type taxonomy。
+- `pattern_type` 唯一決定 modulation 與 bit／symbol domain。
+- 凍結 constructor-time validation、irrelevant-field rejection 與 error contract。
+- 凍結 heterogeneous dtype：general NRZ native integer、PRBS `numpy.int8`、PAM4 `numpy.float64`。
+- 凍結 global／seeded／none RNG mode 與 consumption-order contract。
+- 凍結 14-key canonical serialization 與 exact round-trip policy。
+- 定義 user bits／symbols exact validation、immutability 與 non-aliasing。
+- 定義 future code PR 的 validation matrix、file boundary 與 stop conditions。
+
 ### 4.3 目前實際模型限制
 
 - `pcie_eq.channel.simple_channel()` 仍是一階遞迴低通 Teaching approximation。
 - 現有 CTLE 與 DFE 是簡化教學模型，不是 PCIe Gen-specific Reference Receiver。
 - 現有 Eye／Margin metrics 是近似指標，不是 compliance metrics。
-- 尚無 Pattern Configuration Contract、impulse convolution、Touchstone、完整 sampling／RXEQ、統計 BER 或量測相關性。
+- Pattern Configuration pure core 尚未實作；亦尚無 impulse convolution、Touchstone、完整 sampling／RXEQ、統計 BER 或量測相關性。
 
 ---
 
@@ -167,6 +182,7 @@ Implementation 23／Issue #54／PR #56 已完成：
 Pattern Core
   → PRBS Core
   → Pattern Configuration Contract
+  → Pattern Configuration Pure Core
   → Channel Interface / ChannelConfig
   → Impulse Response Convolution
   → Synthetic / User-defined Impulse
@@ -249,18 +265,31 @@ Validation：
 
 模型等級：**Reference-model-derived general test pattern**。不得稱為 PCIe compliance pattern、PCI-SIG Reference Pattern，或指定硬體 BERT 的 bit-exact phase。
 
-PRBS Core 目前只提供 pure API；GUI selector 與 PatternConfig 尚未加入。
+PRBS Core 目前只提供 pure API；GUI selector 尚未加入。
 
-## 7.4 Step 2.3：Pattern Configuration Contract — Planned / Next Evidence Gate
+## 7.4 Step 2.3：Pattern Configuration — Contract Frozen / Pure Core Planned Next
 
-建立 GUI-independent pattern request／configuration：
+Implementation 24／Issue #58／PR #59 已凍結：
 
-- pattern type。
-- symbol count。
-- random seed。
-- PRBS order／initial state／convention version。
+```text
+docs/PATTERN_CONFIGURATION_CONTRACT.md
+Contract ID: pcie_eq-pattern-config-v1
+```
+
+Contract 定義：
+
+- 11 種 exact pattern type。
+- NRZ bits／PAM4 symbols 的 domain 與 count semantics。
+- constructor-time validation 與 irrelevant-field rejection。
+- random seed、PRBS order／state／convention ID。
 - deterministic pattern parameters。
-- user-defined bits／symbols validation。
+- user-defined bits／symbols exact validation。
+- heterogeneous output dtype、shape、ordering 與 metadata。
+- global／seeded／none RNG mode。
+- 14-key canonical serialization、unknown-version rejection 與 round-trip。
+- validation matrix、allowed／forbidden claims 與 file boundary。
+
+Implementation 25／Issue #60 是目前唯一核准的 code 工作：新增 `pcie_eq.pattern_config` pure core 與獨立 tests，不整合 GUI 或 pipeline。
 
 ## 7.5 Step 2.4：Channel Interface / ChannelConfig
 
@@ -552,28 +581,29 @@ Packaging、EXE、Installer 與防毒誤判仍需另立產品決策。
 
 ## 17. 立即下一步
 
-### Implementation 24：Define Pattern Configuration Contract
+### Implementation 25：Implement Pattern Configuration Core
 
-下一項工作是由 Planner／Reviewer先完成 Pattern Configuration 的 Evidence Gate 與文件，不直接交付 code implementation。
+`docs/PATTERN_CONFIGURATION_CONTRACT.md` 已由 Implementation 24／Issue #58／PR #59 凍結並合併。
 
-資料基礎：
+目前唯一核准的 code 工作是 Issue #60，由 Gemini 依 `pcie_eq-pattern-config-v1` 實作：
 
-- 已合併的 `pcie_eq.patterns` public API。
-- 已合併的 `docs/PRBS_CONVENTION.md`。
-- 既有 NRZ／PAM4 random、deterministic pattern 與 dtype compatibility tests。
-- Pattern Configuration 是本產品內部 software contract，不以名稱猜測 PCIe compliance pattern。
+```text
+pcie_eq/pattern_config.py
+tests/test_pattern_config.py
+tests/test_pattern_config_module_boundary.py
+```
 
-開始 code 前必須先凍結：
+必須完成：
 
-- pattern type taxonomy 與 versioning。
-- bit／symbol domain、modulation 與 count semantics。
-- random seed、PRBS order／state／convention ID。
-- deterministic pattern parameters。
-- user-defined bit／symbol validation。
-- resolved request／result shape、dtype、ordering 與 error contract。
-- round-trip、validation matrix 與 independent expected cases。
-- allowed／forbidden claims 與 GUI／Channel non-scope。
+- `PatternConfig` constructor-time validation。
+- `PatternResult` 與 single `generate_pattern()` dispatch API。
+- 11 種 exact pattern type。
+- random／deterministic／PRBS／user-defined delegation。
+- global／seeded／none RNG contract。
+- heterogeneous dtype preservation。
+- exact 14-key serialization 與 round-trip。
+- independent golden、RNG、validation、serialization 與 module-boundary tests。
 
-文件由 Planner／Reviewer建立並先合併；Gemini 只在文件凍結後負責 pure code 與 tests。
+Gemini 不得修改 Contract 文件、既有 Pattern Core、GUI、pipeline、models 或 simulation math；完成 Draft PR 後停止，不得自行 mark ready 或 merge。
 
-完成 Pattern Configuration 後，再依序進入 Channel Interface、Impulse Convolution、Synthetic／User Impulse 與 Cursor Analysis。每一步仍須個別通過 Evidence Gate。
+Pattern Configuration pure core 完成後，下一項才是 Channel Interface / ChannelConfig 的 docs-first Evidence Gate。
