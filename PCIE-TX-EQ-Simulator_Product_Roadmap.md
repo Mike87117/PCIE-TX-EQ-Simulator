@@ -17,51 +17,96 @@ PCIE-TX-EQ-Simulator 的定位是：
 
 - TX FIR tap、Preshoot、De-emphasis 與波形之間的關係。
 - Channel loss、ISI、reflection、noise 與 jitter 對訊號品質的影響。
-- CTLE、FFE、DFE、CDR 與 slicer 如何改善接收品質。
-- PCIe Gen1～Gen5 NRZ 與 Gen6 PAM4 equalization 的差異。
+- CTLE、FFE、DFE、CDR 與 slicer 如何影響接收結果。
+- PCIe Gen1～Gen5 NRZ 與 Gen6／Gen7 PAM4 的主要訊號處理差異。
 - TX、Channel、RX、sampling 與 threshold 如何共同影響 Eye、Margin 與 error metrics。
 - 理想模型、示波器類波形與實際量測結果為何可能不同。
 
-本產品**不是 PCI-SIG Compliance Tool**，不得宣稱模擬結果等同正式示波器、BERT、SigTest、Seasim 或 PCI-SIG 認證結果。
+本產品**不是 PCI-SIG Compliance Tool**。除非另有正式規格、Reference Model、驗證資料與相關性證據，任何結果不得宣稱等同示波器、BERT、SigTest、Seasim、PCI-SIG 認證或真實硬體最佳設定。
 
 ---
 
-## 2. 事實來源與狀態規則
+## 2. 事實來源、可行性與模型等級
 
-Roadmap 內容必須以已合併至 `main` 的程式碼為準。
+### 2.1 事實來源
 
-狀態定義：
+Roadmap 狀態以已合併至 `main` 的程式碼為準。技術功能是否可開始，則必須同時依據：
 
-- **Completed**：PR 已合併至 `main`，CI 與 Merge Gate 通過。
-- **In Review**：已有 PR，但尚未合併。
-- **Planned**：只有 Roadmap 或 Issue，尚未開始實作。
-- **Blocked**：依賴尚未完成，或 Merge Gate 發現阻擋問題。
+- 可取得的正式規格或官方文件。
+- 公開 Reference Model／方法學／廠商技術文件。
+- 可獨立重現的數學定義。
+- 可用於驗證的 golden vectors、分析解、Reference implementation 或量測資料。
 
-下列事件發生後必須同步本文件：
-
-- Phase 或 Implementation 完成。
-- Roadmap 順序或依賴關係改變。
-- 新增或取消主要產品能力。
-- 實際架構與文件描述產生明顯落差。
-- Regression baseline、CI policy 或 Merge Gate 發生重大改變。
-
-Draft PR、未合併 branch 與本機結果只能列為進行中證據，不能當成正式產品基準。
-
----
-
-## 3. 目前已驗證的產品基準
-
-### 3.1 `main` 基準
-
-截至 2026-08-05：
+完整 Phase 可行性稽核與參考資料登錄於：
 
 ```text
-main commit: 3812ef850523d4dabbcf33ad1e056bc140c2b45f
+docs/ROADMAP_FEASIBILITY_AUDIT.md
+```
+
+### 2.2 模型等級
+
+每個 Implementation 必須標示下列其中一種等級：
+
+1. **Specification-derived**：由可取得的正式規格直接實作。
+2. **Reference-model-derived**：由官方方法學、Reference Receiver 或已驗證模型實作。
+3. **Teaching approximation**：用於說明概念，不代表 PCIe-compliant receiver／channel。
+4. **Research experiment**：尚未完成有效性驗證的探索工作。
+
+GUI、報告與匯出結果必須顯示正確模型等級，不得讓 teaching approximation 看起來像規格模型。
+
+### 2.3 狀態定義
+
+- **Completed**：PR 已合併至 `main`，CI 與 Merge Gate 通過。
+- **Active**：目前 Phase 已啟動，且存在已核准的下一個 Implementation。
+- **Planned**：依賴與資料基礎已確認，但尚未開始。
+- **Conditional**：演算法可行，但規格、Reference Model 或驗證資料尚未完整。
+- **Blocked**：缺少必要依賴、數學定義或 validation oracle。
+- **Research Backlog**：不承諾實作日期，需逐項重新做可行性審查。
+
+Draft PR、未合併 branch、本機結果與未驗證網路資料不能當成正式產品基準。
+
+---
+
+## 3. Evidence Gate
+
+每個 Implementation Issue 在交付給實作者前，必須具備：
+
+- Claim level／模型等級。
+- Authoritative sources 與精確版本。
+- Source access：public、member-only、licensed、user-provided 或 unavailable。
+- 完整數學定義、state machine、polynomial、filter 或轉換規則。
+- input／output、單位、sample interval、shape、dtype、ordering 與 normalization contract。
+- validation oracle：固定 golden vector、分析解、官方 example、獨立實作或量測資料。
+- allowed claims 與 forbidden claims。
+- 資料不足時的 stop condition。
+
+啟動條件：
+
+> 至少一個權威資料來源，加上一個獨立 validation method。
+
+若只有概念性資料，功能只能以 Teaching approximation 實作。若數學定義或 validation oracle 不存在，功能必須保持 Blocked，不得用推測補完。
+
+禁止：
+
+- 使用 production function 動態產生自己的 expected values。
+- 用轉型、rounding、重新計算或放寬 tolerance 掩蓋差異。
+- 根據名稱猜測不同標準之間的 polynomial、receiver topology 或 compliance method 相同。
+
+---
+
+## 4. 目前已驗證的產品基準
+
+### 4.1 Production code baseline
+
+```text
+latest production-code merge: 3812ef850523d4dabbcf33ad1e056bc140c2b45f
 regression baseline: 182 tests
 CI: GitHub Actions / Windows / Python 3.11
 ```
 
-### 3.2 已完成工作
+之後的 docs-only commits 不改變上述 production regression baseline。
+
+### 4.2 已完成工作
 
 #### Phase 0：Baseline Freeze — Completed
 
@@ -81,88 +126,27 @@ CI: GitHub Actions / Windows / Python 3.11
 
 #### Phase 2 / Step 2.1：Pattern Core — Completed
 
-Implementation 22 已透過 Issue #49 與 PR #50 完成：
+Implementation 22／Issue #49／PR #50 已完成：
 
-- 新增 GUI-independent `pcie_eq.patterns`。
+- GUI-independent `pcie_eq.patterns`。
 - NRZ bits／symbols conversion。
 - Seeded 與 global RNG random generation。
 - All 0／All 1、Alternating、Long run、Single transition、Single-bit pulse。
-- `pam4_symbols_from_random()` 保持相容 wrapper。
-- GUI module-level random sequence 與 Generate New Waveform 保持既有 RNG、value、shape 與 dtype contract。
-- Raw-byte fingerprint、global RNG consumption 與 module-boundary tests 已鎖定。
+- PAM4 random compatibility wrapper。
+- GUI RNG、value、shape、dtype 與 raw-byte compatibility。
 
-### 3.3 目前進行中
+### 4.3 目前實際模型限制
 
-- Roadmap Issue：#48 `Phase 2: Channel Foundation`。
-- 下一個 Implementation：**Implementation 23 — Add deterministic PRBS generator core**。
-- Implementation 23 尚未建立 PR，狀態為 **Planned**。
-
-### 3.4 目前實際架構
-
-```text
-PCIE-TX-EQ-Simulator/
-├─ main.py
-├─ PCIE-TX-EQ-Simulator_Product_Roadmap.md
-├─ pcie_eq/
-│  ├─ __init__.py
-│  ├─ models.py
-│  ├─ tx_eq.py
-│  ├─ channel.py
-│  ├─ rx_eq.py
-│  ├─ metrics.py
-│  ├─ pipeline.py
-│  ├─ patterns.py
-│  └─ gui/
-│     ├─ window.py
-│     ├─ window_state.py
-│     ├─ window_layout.py
-│     ├─ window_helpers.py
-│     ├─ nrz_controller.py
-│     ├─ pam4_controller.py
-│     ├─ nrz_tab.py
-│     ├─ pam4_tab.py
-│     └─ random_data.py
-├─ tests/
-├─ requirements.txt
-└─ requirements-dev.txt
-```
-
-### 3.5 目前已有能力
-
-- PCIe Gen1～Gen5 NRZ TX EQ 視覺化。
-- NRZ Preset 0～10。
-- Preshoot、De-emphasis 與 `C-1 / C0 / C+1` 顯示。
-- 簡化的一階 Low-pass Channel。
-- NRZ 簡化 CTLE 與 3-tap 手動 DFE。
-- Channel、CTLE 與 DFE Sample Margin 檢視。
-- PCIe Gen6 PAM4 4-tap TX FIR 與 Q0～Q9。
-- PAM4 Raw Eye 與 Common `t_center` Eye。
-- NRZ／PAM4 波形與近似 Eye metrics。
-- GUI-independent simulation pipeline。
-- GUI-independent deterministic／random Pattern Core。
-- Windows GitHub Actions regression gate。
-
-### 3.6 目前主要限制
-
-- 尚無 PRBS7／9／15／23／31。
-- 尚無 Pattern configuration contract 與 user-defined sequence validation。
-- Channel 仍只有一階 Low-pass Alpha，尚未形成可替換的 Channel interface。
-- 尚無 impulse response convolution、synthetic channel 或 Touchstone import。
-- NRZ sampling phase 仍缺少完整 API、phase sweep 與 CDR。
-- CTLE 與 DFE 仍是簡化教學模型。
-- PAM4 尚未加入完整 RXEQ、threshold optimization 與 decision chain。
-- 尚無 noise、jitter、crosstalk 與統計型 impairment model。
-- 尚無可信的 Density Eye、Eye Width、Bathtub、BER／SER estimate。
-- 尚無 versioned scenario schema、experiment run、batch result 與完整 export contract。
-- 尚無 Auto EQ、heatmap、joint optimization 或 measurement import。
+- `pcie_eq.channel.simple_channel()` 仍是一階遞迴低通 Teaching approximation。
+- 現有 CTLE 與 DFE 是簡化教學模型，不是 PCIe Gen-specific Reference Receiver。
+- 現有 Eye／Margin metrics 是近似指標，不是 compliance metrics。
+- 尚無 PRBS、impulse convolution、Touchstone、完整 sampling／RXEQ、統計 BER 或量測相關性。
 
 ---
 
-## 4. 開發先後順序原則
+## 5. 整體開發順序
 
-### 4.1 依賴優先
-
-後續功能必須依資料與演算法依賴順序實作，不以 UI 顯示順序決定開發順序。
+後續功能依資料與演算法依賴推進：
 
 ```text
 Pattern Core
@@ -175,122 +159,109 @@ Pattern Core
   → Pattern / Channel GUI Integration
   → Channel Views
   → Touchstone
-  → NRZ Sampling / RXEQ
-  → PAM4 RXEQ
-  → Signal Impairments / Statistical Metrics
+  → NRZ Sampling / RXEQ Teaching Model or Reference Model
+  → PAM4 RXEQ Teaching Model or Reference Model
+  → Deterministic Impairments
+  → Statistical Metrics Validation
   → Reproducible Scenario / Experiment
   → Sweep / Auto Equalization
   → Measurement Integration
   → Product UX / Release
 ```
 
-### 4.2 Core 先於 GUI
-
 每一項新能力原則上依序完成：
 
 ```text
-Pure Core API
+Evidence Gate
+  → Pure Core API
   → Validation Contract
   → Unit Tests
   → Module Boundary Tests
   → Existing Behavior Compatibility
   → GUI Integration
-  → Documentation
+  → Documentation / Limitations
 ```
 
-不得先在 controller 中堆疊功能，再回頭尋找 core boundary。
-
-### 4.3 Channel 先於 Cursor
-
-Single-bit pulse 只是分析輸入。要得到有意義的 pre／main／post cursor，必須先有明確的 Channel representation、sampling interval 與 convolution contract。
-
-### 4.4 Metrics 先穩定，再做最佳化
-
-Auto EQ 需要穩定、可比較、可重現的 objective。Preset Resolver、Preset Sweep 與 Auto EQ 不屬於 Phase 2 的立即工作。
-
-### 4.5 Scenario／Experiment 先於批次與最佳化
-
-Sweep、Auto EQ 與 measurement comparison 必須保存 Pattern、seed、TXEQ、Channel、RXEQ、sampling、threshold、objective 與 result metadata。
-
-### 4.6 相容性優先於表面相同
-
-回歸驗證需要視契約同時鎖定：
-
-- value、shape、dtype、array ordering。
-- raw-byte fingerprint。
-- RNG state／consumption order。
-- import surface 與 call sequence。
-- GUI state 與 interaction behavior。
-
-禁止以轉型、rounding 或重新計算掩蓋 baseline 差異。
-
 ---
 
-## 5. 整體 Roadmap
+## 6. Phase 可行性總表
 
-| Phase | 里程碑 | 狀態 | 啟動依賴 | 主要成果 |
+| Phase | 里程碑 | 狀態 | 可行性結論 | 啟動條件 |
 |---|---|---|---|---|
-| Phase 0 | Baseline Freeze | Completed | 無 | regression vectors、GUI baseline、behavior freeze |
-| Phase 1 | Core Refactor | Completed | Phase 0 | core modules、pipeline、GUI split、CI |
-| Phase 2 | Channel Foundation | Active | Phase 1 | pattern、channel interface、impulse、cursor、channel views |
-| Phase 3 | NRZ Sampling & RXEQ | Planned | Phase 2 | sampling、phase sweep、CTLE、FFE、DFE、teaching CDR |
-| Phase 4 | PAM4 RXEQ | Planned | Phase 2；共用 Phase 3 架構 | AGC、CTLE、FFE、DFE、3 thresholds、decision chain |
-| Phase 5 | Signal Impairments & Statistical Metrics | Planned | Phase 3、4 基礎穩定 | noise、jitter、density eye、eye width、bathtub、BER／SER estimate |
-| Phase 6 | Reproducibility & Experiment Infrastructure | Planned | Config contracts 穩定 | versioned scenario、experiment run、batch result、export core |
-| Phase 7 | Sweep & Auto Equalization | Planned | Phase 5、6 | preset／tap sweep、heatmap、optimization、history |
-| Phase 8 | Measurement Integration | Planned | Phase 2、5、6 | waveform import、alignment、comparison、tap extraction |
-| Phase 9 | Product Usability & Release | Planned | 核心工作流程穩定 | scenario UX、reports、guides、error UX、release discipline |
-| Phase 10 | Advanced Research | Planned | 至少一個穩定公開版本 | retimer、FEC、Gen7、plugin、automation |
+| Phase 0 | Baseline Freeze | Completed | 已完成 | 無 |
+| Phase 1 | Core Refactor | Completed | 已完成 | Phase 0 |
+| Phase 2 | Channel Foundation | Active | 可實現；部分 Touchstone mixed-mode 工作有條件 | Phase 1 + 每項 Evidence Gate |
+| Phase 3 | NRZ Sampling & RXEQ | Conditional | Generic teaching receiver 可實現；PCIe Gen-specific receiver 需規格或 Reference Model | Phase 2 + Receiver Evidence Gate |
+| Phase 4 | PAM4 RXEQ | Conditional | Generic PAM4 receiver 可實現；PCIe-specific adaptation 需規格或 AMI／Reference Model | Phase 2 + 共用 receiver contract |
+| Phase 5 | Signal Impairments & Statistical Metrics | Conditional | seeded impairment 可實現；BER／bathtub 需統計方法與 validation oracle | Phase 3、4 的 sampling／decision 穩定 |
+| Phase 6 | Reproducibility & Experiment Infrastructure | Planned | 完全可實現 | Config contracts 穩定 |
+| Phase 7 | Sweep & Auto Equalization | Planned | 可最佳化 simulator objective；不能直接代表硬體最佳值 | Phase 5、6 |
+| Phase 8 | Measurement Integration | Conditional | canonical CSV 可實現；native formats 與 tap fitting 視文件／資料而定 | Phase 2、5、6 + sample datasets |
+| Phase 9 | Product Usability & Release | Planned | 可實現 | 核心 workflow 與模型標示穩定 |
+| Research Backlog | Advanced Research | Research Backlog | 每項獨立審查，不承諾實作 | 穩定公開版本 + 個別 Evidence Gate |
 
 ---
 
-# 6. Phase 2：Channel Foundation
+# 7. Phase 2：Channel Foundation
 
-## 6.1 目的
+## 7.1 目的
 
-建立可替換、可驗證、可重現的 Pattern 與 Channel 基礎，讓後續 ISI、cursor、sampling 與 RXEQ 不再只依賴單一 Low-pass Alpha。
+建立可替換、可驗證、可重現的 Pattern 與 Channel 基礎，使後續 ISI、cursor、sampling 與 RXEQ 不再只依賴一階 Low-pass Alpha。
 
-## 6.2 依賴順序
+## 7.2 Step 2.1：Pattern Core — Completed
 
-### Step 2.1：Pattern Core — Completed
+Implementation 22 已完成。
 
-Implementation 22 / Issue #49 / PR #50 已完成並合併。
+## 7.3 Step 2.2：PRBS Core — Planned / Next
 
-### Step 2.2：PRBS Core — Planned / Next
+Implementation 23 可開始，因為 PRBS polynomial 有 AMD、Tektronix 與 ITU-T 等公開資料基礎。
 
-下一個 Implementation 應加入：
+第一版支援：
 
-- PRBS7。
-- PRBS9。
-- PRBS15。
-- PRBS23。
-- PRBS31。
-- polynomial、initial state、shift direction、output bit 與 feedback convention 文件化。
-- hardcoded golden prefixes。
-- PRBS7／9 完整 period tests。
-- PRBS15 的完整 period 或等價 recurrence validation。
-- PRBS23／31 的 golden prefix、recurrence 與 state-transition tests。
+- PRBS7：`1 + x^6 + x^7`。
+- PRBS9：`1 + x^5 + x^9`。
+- PRBS15：`1 + x^14 + x^15`。
+- PRBS23：`1 + x^18 + x^23`。
+- PRBS31：`1 + x^28 + x^31`。
+
+但 polynomial 不足以唯一決定 bit sequence。Issue 必須固定：
+
+- Fibonacci 或 Galois LFSR。
+- left／right shift。
+- MSB／LSB output。
+- feedback timing。
+- state bit ordering。
+- inversion convention。
+- first output bit。
+- default／custom initial state。
+
+Validation：
+
+- independent hardcoded golden prefixes。
+- PRBS7／9 full-period tests。
+- PRBS15 full-period 或等價 recurrence validation。
+- PRBS23／31 prefix、recurrence 與 state-transition tests。
 - zero state、unsupported order、invalid count／state validation。
 - 不讀取或修改 NumPy global RNG。
 
-不得在此步驟加入 GUI selector、PatternConfig、Channel、Cursor、Scenario 或 Auto EQ。
+模型等級：**Reference-model-derived general test pattern**。不得自動稱為 PCIe compliance pattern。
 
-### Step 2.3：Pattern Configuration Contract
+非範圍：GUI selector、PatternConfig、Channel、Cursor、Scenario、Preset Sweep、Auto EQ。
 
-建立 GUI-independent pattern request／configuration contract，至少描述：
+## 7.4 Step 2.3：Pattern Configuration Contract
+
+建立 GUI-independent pattern request／configuration：
 
 - pattern type。
 - symbol count。
 - random seed。
-- PRBS order／initial state。
+- PRBS order／initial state／convention version。
 - deterministic pattern parameters。
-- user-defined bits／symbols 與 validation。
+- user-defined bits／symbols validation。
 
-此步驟不處理完整 Scenario save/load UI。
+## 7.5 Step 2.4：Channel Interface / ChannelConfig
 
-### Step 2.4：Channel Interface 與 ChannelConfig
-
-建立統一 Channel contract：
+統一支援：
 
 ```text
 none
@@ -300,290 +271,295 @@ impulse_response
 
 要求：
 
-- `none` 為 TX waveform identity。
-- `legacy_lowpass` 保持目前 baseline。
+- `none` 為 identity。
+- `legacy_lowpass` 保持既有 baseline。
+- mode、sample interval、shape、dtype、normalization 與 errors 明確。
 - core 不依賴 GUI。
-- 所有 mode 有明確 input／output shape、dtype 與 validation。
 
-### Step 2.5：Impulse Response Convolution
+## 7.6 Step 2.5：Impulse Response Convolution
 
-建立：
+必須先固定：
 
-- impulse validation 與 normalization policy。
-- convolution length／alignment contract。
-- time-zero／main cursor reference。
-- truncation／padding policy。
-- invalid data error model。
+- `full`／`same`／`valid` policy。
+- sample interval compatibility。
+- output length。
+- time-zero／main cursor alignment。
+- normalization。
+- truncation／padding。
 
-先完成 pure-core tests，再接入 pipeline。
+使用分析解與固定 impulse golden cases 驗證。
 
-### Step 2.6：Synthetic 與 User-defined Impulse
+## 7.7 Step 2.6：Synthetic / User-defined Impulse
 
 依序加入：
 
-1. Synthetic impulse response。
-2. User-provided numeric impulse response。
-3. 可重現 built-in teaching channels。
+1. Synthetic impulse。
+2. User-provided numeric impulse。
+3. built-in teaching channels。
 
-此步驟不處理 Touchstone parser。
+每個 teaching channel 必須公開公式與參數，不得假裝成真實 PCIe channel。
 
-### Step 2.7：Pulse／Cursor Analysis
+## 7.8 Step 2.7：Pulse / Cursor Analysis
 
-Channel contract 與 convolution 穩定後，才建立：
+Channel contract 與 convolution 穩定後才實作：
 
 ```text
 Pre3  Pre2  Pre1  Main  Post1  Post2  Post3
 ```
 
-提供 main cursor、pre／post cursor ISI、residual ISI、sampling phase 與 TX／Channel／CTLE stage comparison。
+輸出 main cursor、pre／post cursor ISI、residual ISI、sampling phase 與 stage comparison。
 
-### Step 2.8：Pattern／Channel GUI Integration
+## 7.9 Step 2.8：Pattern / Channel GUI Integration
 
-等 PatternConfig、ChannelConfig、convolution 與 cursor result 穩定後，再一次整合：
+等 PatternConfig、ChannelConfig、convolution 與 cursor result 穩定後再加入 selector、parameters、impulse input 與 cursor overlay。
 
-- Pattern selector 與 parameters。
-- Channel mode selector。
-- Impulse input。
-- Cursor table／overlay。
+## 7.10 Step 2.9：Channel Views
 
-### Step 2.9：Channel Views
+顯示 frequency response、insertion loss、impulse／step／pulse response 與 time-domain waveform。GUI 只顯示 core result，不重新計算模型。
 
-依 core result 顯示：
+## 7.11 Step 2.10：Touchstone
 
-- frequency response。
-- insertion loss。
-- impulse／step／pulse response。
-- time-domain waveform。
+- `.s2p` parser 與 single-ended teaching path可實現。
+- S-parameter 轉 impulse 前必須處理 frequency spacing、DC extrapolation、windowing 與 reference impedance。
+- `.s4p`／mixed-mode／`SDD21` 只有在 port ordering、wave definition 與 validated sample files 完成後才能開始。
 
-GUI 不得重新計算模型。
+`.s2p` 與 `.s4p` 不得塞入同一大型 PR。
 
-### Step 2.10：Touchstone
+## 7.12 Phase 2 Exit Gate
 
-依序實作：
-
-1. `.s2p` single-ended teaching path。
-2. frequency unit、port、reference impedance 與 interpolation contract。
-3. `.s4p`／mixed-mode／`SDD21` 評估。
-
-`.s2p` 與 differential `.s4p` 不得塞入同一個大型 PR。
-
-## 6.3 Phase 2 Exit Gate
-
-- Pattern 可由固定設定 bit-exact 重現。
-- Channel 可透過統一介面切換。
+- Pattern 可 bit-exact 重現。
+- Channel 可透過統一 interface 切換。
 - `none` 與 legacy Low-pass regression 通過。
-- impulse convolution 有 hardcoded golden tests。
-- pulse response 可正確標示 main、pre、post cursor。
-- Pattern／Channel core 可在無 PyQt 環境執行。
-- GUI 不直接實作 pattern 或 channel 數學。
-- Touchstone 錯誤輸入具備清楚且可測試的錯誤。
-- 所有 PR 通過 GitHub Actions 與 Merge Gate。
-
-## 6.4 Phase 2 非範圍
-
-- CDR 與完整 NRZ／PAM4 RXEQ redesign。
-- Noise／jitter statistical model。
-- Density Eye／Bathtub／BER。
-- Preset Sweep／Auto EQ／ranking。
-- Measurement waveform import。
-- Packaging、EXE、Installer。
+- impulse convolution 有分析解與 hardcoded golden tests。
+- cursor extraction 有 synthetic golden cases。
+- Pattern／Channel core 可無 PyQt 執行。
+- Touchstone parser 與轉換假設有明確 errors／limitations。
 
 ---
 
-# 7. Phase 3：NRZ Sampling & RXEQ
+# 8. Phase 3：NRZ Sampling & RXEQ
 
-開發順序：
+## 8.1 可行性界線
 
-1. Sampling API、manual phase 與 sampling overlay。
+Generic sampling、slicer、CTLE、FFE、DFE 與 simple CDR 可以用公開 DSP 定義實作。
+
+PCIe Gen-specific receiver 則必須取得：
+
+- 對應 revision 的 PCIe Base／PHY Test specification，或
+- 官方 Reference Receiver／方法學，或
+- 可驗證的 IBIS-AMI／量測 Reference Model。
+
+沒有上述資料時，本 Phase 只能走 Teaching Receiver 路徑。
+
+## 8.2 Teaching Receiver 路徑
+
+1. Sampling API、manual phase、overlay。
 2. Phase sweep 與 objective contract。
-3. CTLE frequency-domain parameter model與 legacy compatibility。
-4. RX FFE manual mode。
-5. DFE tap expansion、contribution 與 decision history。
-6. Teaching CDR：fixed、auto center、early／late、tracking。
-7. NRZ deterministic metrics consolidation。
+3. frequency-domain CTLE teaching model。
+4. manual RX FFE。
+5. DFE contribution／decision history。
+6. fixed／auto-center／early-late teaching CDR。
+7. deterministic NRZ metrics。
 
-Eye Width、Bathtub 與 BER 不得在 sampling contract 穩定前提前實作。
+Validation 使用 synthetic channel、known cursor cancellation 與 analytical cases。
 
----
+## 8.3 PCIe Reference Receiver 路徑
 
-# 8. Phase 4：PAM4 RXEQ
+必須另立 Evidence Gate Issue，記錄 spec revision、filter／tap constraints、adaptation rules、stressed-eye method 與 validation source。
 
-開發順序：
+一個通用 receiver 不得被標示為同時適用所有 PCIe generations；公開 PCI-SIG 資料已顯示不同 generation 的 Reference Receiver topology 會改變。
 
-1. PAM4 pattern／coding contract。
-2. AGC／VGA。
-3. PAM4 CTLE。
-4. RX FFE。
-5. common sampling／CDR phase。
-6. three slicer thresholds。
-7. PAM4 DFE。
-8. threshold optimization。
-9. deterministic SER／decision metrics。
+## 8.4 禁止宣稱
 
-NRZ／PAM4 可共用資料流與 result architecture，但不得強迫共用不合理的 decision algorithm。
+- PCIe receiver compliance。
+- receiver tolerance pass／fail。
+- 真實 PHY adaptation 行為。
+- 未經 correlation 的 hardware margin。
 
 ---
 
-# 9. Phase 5：Signal Impairments & Statistical Metrics
+# 9. Phase 4：PAM4 RXEQ
 
-開發順序：
+## 9.1 可行性界線
 
-1. AWGN／vertical noise。
-2. deterministic jitter。
-3. random jitter teaching model。
-4. frequency／phase offset。
-5. simplified crosstalk／interference。
-6. density accumulation contract。
-7. Eye Width。
-8. horizontal／vertical bathtub。
-9. BER／SER estimate 與信賴限制說明。
+IBIS-AMI／PAMn 可作為 generic PAM4 receiver 的資料基礎。可實作：
 
-不得將有限樣本 estimate 描述為 compliance BER。
+- AGC／VGA。
+- CTLE、FFE、simple DFE。
+- common sampling phase。
+- three slicer thresholds。
+- symbol decisions 與 deterministic SER。
+
+## 9.2 Conditional 工作
+
+以下必須有 PCIe spec、Reference Receiver 或 validated AMI model：
+
+- Gen6／Gen7 exact adaptation。
+- tap constraints。
+- threshold training。
+- precoding／Gray coding interaction beyond documented rules。
+- stressed-eye tolerance。
+
+不得把 generic PAM4 receiver 描述為 PCIe compliance receiver。
 
 ---
 
-# 10. Phase 6：Reproducibility & Experiment Infrastructure
+# 10. Phase 5：Signal Impairments & Statistical Metrics
 
-必須建立：
+## 10.1 Part A：Deterministic / Seeded Impairments — Feasible
+
+- AWGN／vertical noise。
+- sinusoidal／deterministic jitter。
+- bounded random-jitter teaching model。
+- frequency／phase offset。
+- explicitly synthetic interference／crosstalk。
+- density accumulation。
+
+每個模型必須有公式、單位、seed policy 與 distribution validation。
+
+## 10.2 Part B：Statistical Metrics — Conditional
+
+Eye Width、bathtub、BER／SER estimate 必須等 sampling／threshold／decision contract 穩定後開始。
+
+產品只能：
+
+- 報告 empirical error rate、sample count 與 confidence limits；或
+- 採用有文件與獨立 validation 的 statistical／analytical method。
+
+低 BER 不可只靠短序列 Monte Carlo 推估。Raw PAM4 SER／BER 也不得被描述為 PCIe post-FEC link reliability，因為目前尚未模擬完整 FEC、CRC 與 replay chain。
+
+---
+
+# 11. Phase 6：Reproducibility & Experiment Infrastructure
+
+本 Phase 完全可實現：
 
 - versioned Scenario schema。
-- Pattern、TXEQ、Channel、RXEQ、sampling、threshold、impairment 設定。
-- random seed 與 RNG policy。
-- Experiment Run identity 與 resolved configuration。
+- Pattern、TXEQ、Channel、RXEQ、sampling、threshold、impairment config。
+- RNG policy。
+- Experiment Run identity 與 resolved config。
 - result／artifact references。
 - batch result model。
 - CSV／JSON／Markdown export core。
 - schema migration policy。
 
-完整 GUI New／Save／Load 可延後，但 core schema 必須先於 Auto EQ。
+Round-trip、migration 與 golden export tests 為主要 validation oracle。
 
 ---
 
-# 11. Phase 7：Sweep & Auto Equalization
+# 12. Phase 7：Sweep & Auto Equalization
 
-開發順序：
+可實作：
 
-1. GUI-independent Preset Resolver。
+1. Preset Resolver。
 2. Sweep request／result model。
-3. NRZ TX Preset sweep。
-4. PAM4 Q Preset sweep。
-5. TX tap sweep。
-6. sampling／CTLE／FFE／DFE／threshold sweep。
-7. heatmap data model與 GUI。
-8. grid search／coordinate descent。
-9. decision-directed adaptation research。
-10. joint TX／RX optimization。
+3. NRZ／PAM4 preset sweep。
+4. TX／RX parameter sweep。
+5. heatmap data model。
+6. grid search／coordinate descent。
 
-結果只能描述為 configured sweep 內的 simulated comparison，不得宣稱真實硬體最佳 preset 或 PCI-SIG 結論。
+啟動條件：
 
----
+- objective metrics 穩定。
+- Scenario／Experiment 已完成。
+- invalid result、progress、cancel contract 已定義。
 
-# 12. Phase 8：Measurement Integration
-
-依序加入：
-
-1. Generic waveform CSV。
-2. time／voltage／unit validation。
-3. sampling rate／UI／baud contract。
-4. edge alignment。
-5. Tektronix／Keysight adapters。
-6. measured-vs-simulated comparison。
-7. pulse／cursor comparison。
-8. tap extraction 與 fit quality reporting。
-
-Parser、alignment 與 analysis 必須能獨立測試，不得直接耦合 GUI。
+結果只能描述為 configured sweep 內的 simulated optimum。Decision-directed adaptation 與 joint optimization 必須標示 Research experiment，不能與 deterministic sweep 混為同一交付。
 
 ---
 
-# 13. Phase 9：Product Usability & Release
+# 13. Phase 8：Measurement Integration
 
-- Scenario New／Save／Save As／Load UX。
+## 13.1 Feasible first delivery
+
+- project-owned canonical time／voltage CSV。
+- units、sample rate、UI／baud、polarity validation。
+- documented Keysight／Tektronix CSV variants。
+- edge／pattern alignment。
+- measured-vs-simulated waveform／cursor comparison。
+
+## 13.2 Conditional adapters
+
+Native vendor formats只支援有公開格式文件、SDK 或 user-provided sample files 的指定 instrument family／version。
+
+例如 Tektronix 公開 WFM 格式只代表文件列出的 instrument families，不代表所有 Tektronix oscilloscopes。
+
+## 13.3 Tap extraction
+
+必須具備 known pattern／step response、明確 FIR order、constraints、residual、fit quality 與 validation datasets。沒有 reference waveform 或 fitting methodology 時保持 Blocked。
+
+---
+
+# 14. Phase 9：Product Usability & Release
+
+- Scenario New／Save／Load UX。
 - A／B comparison。
-- 未儲存變更提示。
-- CSV／JSON／Markdown reports。
-- User Guide、Architecture Guide、Model Limitations、Validation Cases。
-- Release Notes、Glossary、Basic／Advanced mode。
-- 統一錯誤訊息與大型工作 progress／cancel UX。
+- reports、guides、limitations、validation cases。
+- Basic／Advanced mode。
+- 統一 errors、progress／cancel UX。
+- Release Notes 與 glossary。
 
-Packaging、EXE、Installer 與防毒誤判需另立產品決策，不自動納入本 Phase。
+Release Gate 必須確認每個 output 顯示正確模型等級與限制。
+
+Packaging、EXE、Installer 與防毒誤判仍需另立產品決策。
 
 ---
 
-# 14. Phase 10：Advanced Research
+# 15. Research Backlog
 
-候選功能：
+下列項目不再列為承諾中的 Planned Phase；每項需獨立 feasibility review：
 
 - Retimer／multi-segment channel。
 - package、connector、via model。
 - crosstalk matrix。
-- Gen6 FEC teaching model。
-- pre-FEC／post-FEC error view。
+- Gen6 FEC／pre-FEC／post-FEC view。
 - RLM／SNDR approximation。
-- advanced CDR、PCIe Gen7 profile。
-- Batch CLI、public Python API、plugin architecture。
-- hardware measurement automation interface。
+- advanced CDR。
+- PCIe Gen7 profile。
+- Batch CLI／public API。
+- plugin architecture。
+- hardware measurement automation。
+
+其中 CLI／API 可實現；FEC、Gen7、hardware automation 等則取決於規格、Reference Model、SDK、license、hardware 與 validation data。
 
 ---
 
-## 15. 所有 PR 的 Merge Gate
+## 16. 所有 PR 的 Merge Gate
 
 每個 PR 必須提供：
 
 - Related Roadmap Issue。
-- Scope／non-scope。
-- unit tests 與 module-boundary tests。
-- regression count 與 GitHub Actions run。
-- `python -c "import main"`。
-- 涉及 GUI 時的 startup／interaction smoke evidence。
+- Evidence Gate summary 與模型等級。
+- Authoritative source／version／access status。
+- Scope／non-scope／allowed claims／forbidden claims。
+- mathematical／data contract。
+- validation oracle 與 independent expected values。
+- unit tests、module-boundary tests、regression count。
+- GitHub Actions run 與 `python -c "import main"`。
+- GUI startup／interaction evidence（涉及 GUI 時）。
 - `git diff --check`。
-- value／shape／dtype／raw-byte compatibility 說明。
-- RNG state／seed／consumption order 說明。
-- public import surface 說明。
-- 模擬數學與 GUI 行為是否改變。
+- value／shape／dtype／ordering／raw-byte compatibility。
+- RNG state／seed／consumption order。
+- public import surface 與 call sequence。
 - known limitations。
 
-禁止：
-
-- 以轉型、rounding 或重新計算掩蓋 baseline 差異。
-- 為了讓測試通過而弱化 expected values、tolerance 或 assertions。
-- 在同一 PR 混入不相干重構、UI redesign 或 packaging。
-- 未經明確規劃提前實作後續 Phase。
+任何資料不足、Reference Model 缺失或 validation 無法獨立成立的功能，不得通過 Merge Gate。
 
 ---
 
-## 16. 立即下一步
+## 17. 立即下一步
 
 ### Implementation 23：Add deterministic PRBS generator core
 
-下一個工作只包含 GUI-independent PRBS7／9／15／23／31、明確 LFSR convention、hardcoded golden vectors、period／recurrence／validation tests 與 module-boundary tests。
+Implementation 23 是目前唯一已通過可行性審查的下一個功能。
 
-建議公開 API：
+開始前必須建立／更新 Issue，內容包含：
 
-```python
-generate_prbs_bits(
-    order: int,
-    count: int,
-    initial_state: int | None = None,
-) -> numpy.ndarray
-```
+- AMD／Tektronix／ITU-T 等選定資料來源。
+- polynomial table。
+- 完整 LFSR convention。
+- independent hardcoded golden prefixes。
+- period／recurrence validation plan。
+- general PRBS test pattern 的模型聲明。
 
-第一版必須固定：
-
-- supported orders：7、9、15、23、31。
-- default initial state：all ones。
-- zero state：拒絕。
-- output：一維整數 `0 / 1` array。
-- `count=0`：空整數 array。
-- NumPy global RNG：完全不讀取、不修改。
-- polynomial、shift direction、output bit、feedback timing 與 state bit ordering 全部文件化。
-
-不得在 Implementation 23 同時加入：
-
-- Pattern selector GUI。
-- PatternConfig／user-defined sequence。
-- Channel model／ChannelConfig。
-- Cursor analysis。
-- Scenario storage。
-- Preset Sweep／Auto EQ。
-
-Implementation 23 完成後，依序進入 Pattern Configuration Contract、Channel Interface、Impulse Convolution、Synthetic／User Impulse 與 Cursor Analysis。
+完成後依序進入 Pattern Configuration、Channel Interface、Impulse Convolution、Synthetic／User Impulse 與 Cursor Analysis。每一步仍須個別通過 Evidence Gate。
