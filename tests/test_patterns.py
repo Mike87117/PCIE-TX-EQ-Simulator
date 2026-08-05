@@ -486,8 +486,28 @@ def test_prbs_full_period_traversal():
 
 
 def test_prbs23_31_spot_checks_and_prefix_consistency():
-    """Verify spot checks, long prefix repeatability, and prefix slice consistency for PRBS23 and PRBS31."""
-    for order in (23, 31):
+    """Verify independent recurrence spot checks, custom state transitions, long prefix repeatability, and prefix slice consistency for PRBS23 and PRBS31."""
+    custom_states = {
+        23: (1, 0x5A123),
+        31: (1, 0x1234567),
+    }
+
+    count = 128
+    for order, states in custom_states.items():
+        for initial_state in states:
+            assert 1 <= initial_state <= (1 << order) - 1, f"Custom initial state {initial_state} out of valid range for order {order}"
+
+            # Convert integer initial_state to LSB-first bit tuple for independent reference recurrence
+            state_tuple = tuple((initial_state >> bit_index) & 1 for bit_index in range(order))
+            expected = np.empty(count, dtype=np.int8)
+            for index in range(count):
+                output_bit, state_tuple = _independent_lfsr_step(state_tuple, order)
+                expected[index] = output_bit
+
+            actual = generate_prbs_bits(order, count, initial_state=initial_state)
+            assert actual.dtype == np.int8
+            assert np.array_equal(actual, expected), f"PRBS{order} custom state {initial_state} mismatch with independent test reference"
+
         # Long prefix repeatability
         s1 = generate_prbs_bits(order, 5000)
         s2 = generate_prbs_bits(order, 5000)
