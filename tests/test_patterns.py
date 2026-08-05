@@ -35,6 +35,7 @@ from pcie_eq.patterns import (
     generate_nrz_long_run,
     generate_nrz_single_transition,
     generate_nrz_single_bit_pulse,
+    generate_prbs_bits,
 )
 
 
@@ -321,3 +322,179 @@ def test_gui_on_generate_new_waveform_dtype_and_state_contracts(qapp):
         assert np.array_equal(win.symbols, 2 * win.bits - 1)
     finally:
         win.close()
+
+
+# --- PRBS Generator Core Tests (Implementation 23 / Issue #54) ---
+
+GOLDEN_ALL_ONES_64 = {
+    7: np.array([int(c) for c in "1111111000000100000110000101000111100100010110011101010011111010"], dtype=np.int8),
+    9: np.array([int(c) for c in "1111111110000011110111110001011100110010000010010100111011010001"], dtype=np.int8),
+    15: np.array([int(c) for c in "1111111111111110000000000000010000000000000110000000000001010000"], dtype=np.int8),
+    23: np.array([int(c) for c in "1111111111111111111111100000000000000000011111000000000000011111"], dtype=np.int8),
+    31: np.array([int(c) for c in "1111111111111111111111111111111000000000000000000000000000011100"], dtype=np.int8),
+}
+
+GOLDEN_INIT_1_32 = {
+    7: np.array([int(c) for c in "10000001000001100001010001111001"], dtype=np.int8),
+    9: np.array([int(c) for c in "10000000010000100011000010011100"], dtype=np.int8),
+    15: np.array([int(c) for c in "10000000000000010000000000000110"], dtype=np.int8),
+    23: np.array([int(c) for c in "10000000000000000000000100000000"], dtype=np.int8),
+    31: np.array([int(c) for c in "10000000000000000000000000000001"], dtype=np.int8),
+}
+
+
+def test_prbs_frozen_golden_vectors_all_ones():
+    """Verify default all-ones initial state 64-bit Golden prefixes across PRBS7/9/15/23/31."""
+    for order, expected in GOLDEN_ALL_ONES_64.items():
+        actual = generate_prbs_bits(order, 64)
+        assert actual.dtype == np.int8
+        assert np.array_equal(actual, expected), f"PRBS{order} all-ones golden prefix mismatch"
+
+
+def test_prbs_frozen_golden_vectors_initial_state_1():
+    """Verify initial_state=1 32-bit Golden prefixes across PRBS7/9/15/23/31."""
+    for order, expected in GOLDEN_INIT_1_32.items():
+        actual = generate_prbs_bits(order, 32, initial_state=1)
+        assert actual.dtype == np.int8
+        assert np.array_equal(actual, expected), f"PRBS{order} initial_state=1 golden prefix mismatch"
+
+
+def test_prbs_output_contract_shape_dtype_values():
+    """Verify output contract for PRBS generator: np.int8, shape (count,), values in {0, 1}."""
+    for order in (7, 9, 15, 23, 31):
+        bits = generate_prbs_bits(order, 100)
+        assert isinstance(bits, np.ndarray)
+        assert bits.shape == (100,)
+        assert bits.dtype == np.int8
+        assert set(bits).issubset({0, 1})
+
+
+def test_prbs_count_zero_and_validation():
+    """Verify count=0 returns empty np.int8 array, and invalid order/state are validated even when count=0."""
+    empty = generate_prbs_bits(7, 0)
+    assert isinstance(empty, np.ndarray)
+    assert empty.shape == (0,)
+    assert empty.dtype == np.int8
+
+    # Must validate order and initial_state even if count=0
+    with pytest.raises(ValueError):
+        generate_prbs_bits(8, 0)
+    with pytest.raises(TypeError):
+        generate_prbs_bits(True, 0)
+    with pytest.raises(ValueError):
+        generate_prbs_bits(7, 0, initial_state=0)
+    with pytest.raises(ValueError):
+        generate_prbs_bits(7, 0, initial_state=128)
+    with pytest.raises(TypeError):
+        generate_prbs_bits(7, 0, initial_state="invalid")
+
+
+def test_prbs_validation_contracts():
+    """Verify type and value validation contracts for order, count, and initial_state."""
+    # order validation
+    for invalid_order in [True, False, 3.14, "7", None]:
+        with pytest.raises(TypeError):
+            generate_prbs_bits(invalid_order, 10)
+    for invalid_order in [0, 5, 8, 16, 32, -7]:
+        with pytest.raises(ValueError):
+            generate_prbs_bits(invalid_order, 10)
+
+    # count validation
+    for invalid_count in [True, False, 2.5, "10"]:
+        with pytest.raises(TypeError):
+            generate_prbs_bits(7, invalid_count)
+    with pytest.raises(ValueError):
+        generate_prbs_bits(7, -1)
+
+    # initial_state validation
+    for invalid_state in [True, False, 1.5, "1"]:
+        with pytest.raises(TypeError):
+            generate_prbs_bits(7, 10, initial_state=invalid_state)
+    for invalid_state in [0, -1, 128]:
+        with pytest.raises(ValueError):
+            generate_prbs_bits(7, 10, initial_state=invalid_state)
+
+    # Valid initial_state boundary: 1 and (1 << order) - 1
+    generate_prbs_bits(7, 5, initial_state=1)
+    generate_prbs_bits(7, 5, initial_state=127)
+
+
+def test_prbs_rng_isolation():
+    """Verify calling generate_prbs_bits does not alter NumPy global RNG state."""
+    initial_rng_state = np.random.get_state()
+    try:
+        generate_prbs_bits(7, 100)
+        generate_prbs_bits(15, 500, initial_state=42)
+        generate_prbs_bits(31, 1000)
+
+        final_rng_state = np.random.get_state()
+        assert initial_rng_state[0] == final_rng_state[0]
+        assert np.array_equal(initial_rng_state[1], final_rng_state[1])
+        assert initial_rng_state[2:] == final_rng_state[2:]
+    finally:
+        np.random.set_state(initial_rng_state)
+
+
+def test_prbs_repeatability_and_initial_states():
+    """Verify bit-exact repeatability and sequence divergence for different initial states."""
+    seq1 = generate_prbs_bits(7, 100, initial_state=42)
+    seq2 = generate_prbs_bits(7, 100, initial_state=42)
+    assert np.array_equal(seq1, seq2)
+
+    seq_diff = generate_prbs_bits(7, 100, initial_state=43)
+    assert not np.array_equal(seq1, seq_diff)
+
+
+def _independent_lfsr_step(state_tuple, order):
+    """Independent bit-array LFSR reference step for test validation."""
+    tap_map = {7: 6, 9: 5, 15: 14, 23: 18, 31: 28}
+    k = tap_map[order]
+    shift_pos = order - k
+    output_bit = state_tuple[0]
+    feedback = state_tuple[0] ^ state_tuple[shift_pos]
+    next_state = state_tuple[1:] + (feedback,)
+    return output_bit, next_state
+
+
+def test_prbs_full_period_traversal():
+    """Verify full period traversal (2^n - 1) for PRBS7, PRBS9, and PRBS15."""
+    for order in (7, 9, 15):
+        period = (1 << order) - 1
+        gen_bits = generate_prbs_bits(order, period + 1)
+
+        # Build reference sequence and track state uniqueness
+        ref_bits = np.empty(period + 1, dtype=np.int8)
+        state_tuple = (1,) * order
+        visited_states = set()
+
+        for i in range(period):
+            assert state_tuple not in visited_states, f"PRBS{order} repeated state prematurely at step {i}"
+            assert state_tuple != (0,) * order, f"PRBS{order} entered all-zero state at step {i}"
+            visited_states.add(state_tuple)
+
+            out_bit, state_tuple = _independent_lfsr_step(state_tuple, order)
+            ref_bits[i] = out_bit
+
+        # After period steps, state must return to initial state (all ones)
+        assert state_tuple == (1,) * order, f"PRBS{order} state did not return to initial state after period {period}"
+        out_bit, _ = _independent_lfsr_step(state_tuple, order)
+        ref_bits[period] = out_bit
+
+        assert len(visited_states) == period, f"PRBS{order} did not cover all 2^n - 1 states"
+        assert np.array_equal(gen_bits, ref_bits), f"PRBS{order} sequence mismatch with independent test reference"
+        assert gen_bits[period] == gen_bits[0], f"PRBS{order} bit at period index does not equal initial bit"
+
+
+def test_prbs23_31_spot_checks_and_prefix_consistency():
+    """Verify spot checks, long prefix repeatability, and prefix slice consistency for PRBS23 and PRBS31."""
+    for order in (23, 31):
+        # Long prefix repeatability
+        s1 = generate_prbs_bits(order, 5000)
+        s2 = generate_prbs_bits(order, 5000)
+        assert np.array_equal(s1, s2)
+
+        # Prefix slice consistency: generate(count=a+b)[:a] == generate(count=a)
+        a, b = 2000, 3000
+        full_seq = generate_prbs_bits(order, a + b, initial_state=12345)
+        prefix_seq = generate_prbs_bits(order, a, initial_state=12345)
+        assert np.array_equal(full_seq[:a], prefix_seq)

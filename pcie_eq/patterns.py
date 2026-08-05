@@ -17,6 +17,7 @@ __all__ = [
     "generate_nrz_long_run",
     "generate_nrz_single_transition",
     "generate_nrz_single_bit_pulse",
+    "generate_prbs_bits",
 ]
 
 
@@ -150,3 +151,63 @@ def generate_nrz_single_bit_pulse(count, pulse_index, baseline_bit=0):
     arr = np.full(count, baseline_bit, dtype=int)
     arr[pulse_index] = 1 - baseline_bit
     return arr
+
+
+_PRBS_TAPS = {
+    7: 6,
+    9: 5,
+    15: 14,
+    23: 18,
+    31: 28,
+}
+
+
+def generate_prbs_bits(order, count, initial_state=None):
+    """
+    Generate deterministic PRBS bits according to convention pcie_eq-prbs-fibonacci-lsb-v1.
+
+    Parameters
+    ----------
+    order : int
+        PRBS order, must be one of {7, 9, 15, 23, 31}.
+    count : int
+        Number of output bits to generate.
+    initial_state : int or None, optional
+        Initial LFSR state (1 to 2^order - 1). Default is all-ones state: (1 << order) - 1.
+
+    Returns
+    -------
+    numpy.ndarray
+        1D array of shape (count,) with dtype np.int8 containing 0 and 1 values.
+    """
+    if isinstance(order, bool) or not isinstance(order, int):
+        raise TypeError(f"order must be an integer, got {type(order).__name__}")
+    if order not in _PRBS_TAPS:
+        raise ValueError(f"order must be one of {set(_PRBS_TAPS.keys())}, got {order}")
+
+    _validate_count(count)
+
+    if initial_state is None:
+        initial_state = (1 << order) - 1
+    elif isinstance(initial_state, bool) or not isinstance(initial_state, int):
+        raise TypeError(f"initial_state must be an integer or None, got {type(initial_state).__name__}")
+    else:
+        max_state = (1 << order) - 1
+        if initial_state <= 0 or initial_state > max_state:
+            raise ValueError(f"initial_state must be between 1 and {max_state}, got {initial_state}")
+
+    if count == 0:
+        return np.array([], dtype=np.int8)
+
+    bits = np.empty(count, dtype=np.int8)
+    state = initial_state
+    n = order
+    k = _PRBS_TAPS[order]
+    shift_amount = n - k
+
+    for i in range(count):
+        bits[i] = state & 1
+        feedback = (state & 1) ^ ((state >> shift_amount) & 1)
+        state = (state >> 1) | (feedback << (n - 1))
+
+    return bits
