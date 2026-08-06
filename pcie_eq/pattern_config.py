@@ -111,18 +111,18 @@ class PatternConfig:
     prbs_convention_id: str | None = None
     user_values: tuple[int | float | bool, ...] | None = None
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.schema_version, str):
+    def _validate(self) -> None:
+        if type(self.schema_version) is not str:
             raise TypeError(f"schema_version must be str, got {type(self.schema_version).__name__}")
         if self.schema_version != PATTERN_CONFIG_CONTRACT_ID:
             raise ValueError(f"Unknown schema_version '{self.schema_version}', expected '{PATTERN_CONFIG_CONTRACT_ID}'")
 
-        if not isinstance(self.pattern_type, str):
+        if type(self.pattern_type) is not str:
             raise TypeError(f"pattern_type must be str, got {type(self.pattern_type).__name__}")
         if self.pattern_type not in SUPPORTED_PATTERN_TYPES:
             raise ValueError(f"Unsupported pattern_type '{self.pattern_type}'")
 
-        if isinstance(self.count, bool) or not isinstance(self.count, int):
+        if type(self.count) is not int:
             raise TypeError(f"count must be int, got {type(self.count).__name__}")
         if self.count < 0:
             raise ValueError(f"count must be >= 0, got {self.count}")
@@ -139,7 +139,7 @@ class PatternConfig:
 
         # Pattern-specific validations
         if "seed" in allowed and self.seed is not None:
-            if isinstance(self.seed, bool) or not isinstance(self.seed, int):
+            if type(self.seed) is not int:
                 raise TypeError(f"seed must be int or None, got {type(self.seed).__name__}")
             if not (0 <= self.seed <= 2**32 - 1):
                 raise ValueError(f"seed must be between 0 and 2**32 - 1, got {self.seed}")
@@ -148,7 +148,7 @@ class PatternConfig:
             if bit_field in allowed:
                 val = getattr(self, bit_field)
                 if val is not None:
-                    if isinstance(val, bool) or not isinstance(val, int):
+                    if type(val) is not int:
                         raise TypeError(f"{bit_field} must be int (0 or 1), got {type(val).__name__}")
                     if val not in (0, 1):
                         raise ValueError(f"{bit_field} must be 0 or 1, got {val}")
@@ -156,7 +156,7 @@ class PatternConfig:
         if "run_length" in allowed:
             if self.run_length is None:
                 raise ValueError("nrz_long_run requires run_length")
-            if isinstance(self.run_length, bool) or not isinstance(self.run_length, int):
+            if type(self.run_length) is not int:
                 raise TypeError(f"run_length must be int, got {type(self.run_length).__name__}")
             if self.run_length < 1:
                 raise ValueError(f"run_length must be >= 1, got {self.run_length}")
@@ -164,7 +164,7 @@ class PatternConfig:
         if "transition_index" in allowed:
             if self.transition_index is None:
                 raise ValueError("nrz_single_transition requires transition_index")
-            if isinstance(self.transition_index, bool) or not isinstance(self.transition_index, int):
+            if type(self.transition_index) is not int:
                 raise TypeError(f"transition_index must be int, got {type(self.transition_index).__name__}")
             if not (0 <= self.transition_index <= self.count):
                 raise ValueError(f"transition_index must be between 0 and count ({self.count}), got {self.transition_index}")
@@ -172,7 +172,7 @@ class PatternConfig:
         if "pulse_index" in allowed:
             if self.pulse_index is None:
                 raise ValueError("nrz_single_bit_pulse requires pulse_index")
-            if isinstance(self.pulse_index, bool) or not isinstance(self.pulse_index, int):
+            if type(self.pulse_index) is not int:
                 raise TypeError(f"pulse_index must be int, got {type(self.pulse_index).__name__}")
             if not (0 <= self.pulse_index < self.count):
                 raise ValueError(f"pulse_index must be between 0 and count - 1 ({self.count - 1}), got {self.pulse_index}")
@@ -180,20 +180,20 @@ class PatternConfig:
         if "prbs_order" in allowed:
             if self.prbs_order is None:
                 raise ValueError("nrz_prbs requires prbs_order")
-            if isinstance(self.prbs_order, bool) or not isinstance(self.prbs_order, int):
+            if type(self.prbs_order) is not int:
                 raise TypeError(f"prbs_order must be int, got {type(self.prbs_order).__name__}")
             if self.prbs_order not in {7, 9, 15, 23, 31}:
                 raise ValueError(f"prbs_order must be one of {{7, 9, 15, 23, 31}}, got {self.prbs_order}")
 
             if self.prbs_initial_state is not None:
-                if isinstance(self.prbs_initial_state, bool) or not isinstance(self.prbs_initial_state, int):
+                if type(self.prbs_initial_state) is not int:
                     raise TypeError(f"prbs_initial_state must be int, got {type(self.prbs_initial_state).__name__}")
                 max_state = (1 << self.prbs_order) - 1
                 if not (1 <= self.prbs_initial_state <= max_state):
                     raise ValueError(f"prbs_initial_state must be between 1 and {max_state}, got {self.prbs_initial_state}")
 
             if self.prbs_convention_id is not None:
-                if not isinstance(self.prbs_convention_id, str):
+                if type(self.prbs_convention_id) is not str:
                     raise TypeError(f"prbs_convention_id must be str, got {type(self.prbs_convention_id).__name__}")
                 if self.prbs_convention_id != PRBS_CONVENTION_ID:
                     raise ValueError(f"Unknown prbs_convention_id '{self.prbs_convention_id}', expected '{PRBS_CONVENTION_ID}'")
@@ -201,29 +201,30 @@ class PatternConfig:
         if "user_values" in allowed:
             if self.user_values is None:
                 raise ValueError(f"'{self.pattern_type}' requires user_values")
-            if not isinstance(self.user_values, tuple):
+            if type(self.user_values) is not tuple:
                 raise TypeError(f"user_values must be tuple or None, got {type(self.user_values).__name__}")
             if len(self.user_values) != self.count:
                 raise ValueError(f"user_values length ({len(self.user_values)}) must equal count ({self.count})")
 
             if self.pattern_type == "nrz_user_bits":
                 for elem in self.user_values:
-                    if isinstance(elem, float):
-                        raise TypeError(f"nrz_user_bits element must be int or bool, got float {elem}")
-                    if not isinstance(elem, (int, bool)):
-                        raise TypeError(f"nrz_user_bits element must be int or bool, got {type(elem).__name__}")
+                    if type(elem) not in (int, bool):
+                        raise TypeError(f"nrz_user_bits element must be exact int or bool, got {type(elem).__name__}")
                     if elem not in (0, 1, False, True):
                         raise ValueError(f"nrz_user_bits element must be 0 or 1, got {elem}")
 
             elif self.pattern_type == "pam4_user_symbols":
                 for elem in self.user_values:
-                    if isinstance(elem, bool) or not isinstance(elem, (int, float)):
-                        raise TypeError(f"pam4_user_symbols element must be int or float, got {type(elem).__name__}")
+                    if type(elem) not in (int, float):
+                        raise TypeError(f"pam4_user_symbols element must be exact Python int or float, got {type(elem).__name__}")
                     flt_val = float(elem)
                     if math.isnan(flt_val) or math.isinf(flt_val):
                         raise ValueError(f"pam4_user_symbols element must be finite, got {elem}")
                     if flt_val not in CANONICAL_PAM4_LEVELS:
                         raise ValueError(f"pam4_user_symbols element {elem} is not a valid PAM4 level in {CANONICAL_PAM4_LEVELS}")
+
+    def __post_init__(self) -> None:
+        self._validate()
 
     def to_dict(self) -> dict[str, object]:
         res = {}
@@ -253,6 +254,8 @@ class PatternConfig:
             raise ValueError(f"Invalid dictionary keys ({', '.join(msg_parts)})")
 
         schema_version = data["schema_version"]
+        if type(schema_version) is not str:
+            raise TypeError(f"schema_version in dict must be str, got {type(schema_version).__name__}")
         if schema_version != PATTERN_CONFIG_CONTRACT_ID:
             raise ValueError(f"Unknown schema_version '{schema_version}', expected '{PATTERN_CONFIG_CONTRACT_ID}'")
 
@@ -260,7 +263,7 @@ class PatternConfig:
         for key in CANONICAL_KEYS:
             val = data[key]
             if key == "user_values" and val is not None:
-                if not isinstance(val, list):
+                if type(val) is not list:
                     raise TypeError(f"user_values in dict must be a list or None, got {type(val).__name__}")
                 kwargs[key] = tuple(val)
             else:
@@ -279,8 +282,11 @@ class PatternResult:
 
 
 def generate_pattern(config: PatternConfig) -> PatternResult:
-    if not isinstance(config, PatternConfig):
-        raise TypeError(f"config must be a PatternConfig instance, got {type(config).__name__}")
+    if type(config) is not PatternConfig:
+        raise TypeError(f"config must be exactly PatternConfig, got {type(config).__name__}")
+
+    # Defensive re-validation of original PatternConfig instance before any processing or RNG access
+    config._validate()
 
     # Resolve default values for resolved_config
     ptype = config.pattern_type
@@ -379,13 +385,14 @@ def generate_pattern(config: PatternConfig) -> PatternResult:
         if values.dtype != np.float64:
             raise RuntimeError(f"{ptype} dtype mismatch: got {values.dtype}, expected float64")
 
-    # Value domain checks
+    # Value domain checks (exact equality for PAM4, no tolerance/rounding)
     if domain == "bits" and values.size > 0:
-        if not set(values).issubset({0, 1}):
-            raise RuntimeError(f"NRZ pattern contains invalid bit values: {set(values)}")
+        for val in values:
+            if val not in (0, 1):
+                raise RuntimeError(f"NRZ pattern contains invalid bit value: {val}")
     elif domain == "symbols" and values.size > 0:
         for val in values:
-            if not any(math.isclose(val, lvl, abs_tol=1e-15) for lvl in CANONICAL_PAM4_LEVELS):
+            if val not in CANONICAL_PAM4_LEVELS:
                 raise RuntimeError(f"PAM4 pattern contains invalid symbol value: {val}")
 
     return PatternResult(
