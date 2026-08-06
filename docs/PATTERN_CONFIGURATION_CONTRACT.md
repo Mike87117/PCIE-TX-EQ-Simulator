@@ -8,6 +8,8 @@
 > Related Roadmap：Issue #48  
 > Related Evidence Gate：Issue #58
 
+**本文件已套用 Amendment 1（2026-08-06），修正 NRZ integer dtype 條款。變更理由、受影響章節與量測依據見 §19。其餘條款未變更。**
+
 ---
 
 ## 1. 目的與界線
@@ -53,6 +55,8 @@
 | `pcie_eq/gui/pam4_controller.py`、`gui/random_data.py` | Repository | PAM4 random compatibility wrapper與float64 symbol domain |
 | NumPy legacy random documentation | Public primary | `RandomState` scalar seed range與global legacy RNG：https://numpy.org/doc/2.0/reference/random/legacy.html |
 | NumPy 2.4 `asarray` documentation | Public primary | array conversion、dtype與order：https://numpy.org/doc/2.4/reference/generated/numpy.asarray.html |
+| NEP 51 / NumPy 2.0 migration guide | Public primary | Windows 上 default integer 與 C `long` 分離：https://numpy.org/doc/2.4/numpy_2_0_migration_guide.html |
+| Amendment 1 dtype measurement（見 §19.2） | Repository-reproducible | 現有 generator 的 exact dtype，為 §9 dtype matrix 的直接依據 |
 
 Repository regression contract 優先。V1 不得將 existing `RandomState`／global RNG改成 `default_rng()`。
 
@@ -334,15 +338,56 @@ NRZ GUI目前於module initialization呼叫 `np.random.seed(7)`，以global RNG�
 - 1D、shape `(count,)`、C-contiguous。
 - User-defined output為新array，不與input共享writable storage。
 
+### Dtype 基本原則：delegated passthrough
+
+`generate_pattern()` **不決定** dtype，只 **保存** 被委派 generator 產生的 dtype。V1 不得為了讓輸出看起來一致而做任何 cast、`astype()`、`asarray(dtype=...)` 或 container 重建。
+
+因此下表是「現有 `pcie_eq.patterns` 行為的紀錄」，不是「本 contract 選定的目標」。若實測與下表不符，屬於 §17 stop condition，必須先開 docs PR，不得由實作者調整 code 使其符合下表。
+
 ### Dtype matrix
 
-| Pattern group | Exact dtype |
-|---|---|
-| General NRZ random／deterministic、`nrz_user_bits` | `numpy.dtype(int)`，platform native signed integer |
-| `nrz_prbs` | `numpy.int8` |
-| PAM4 random／user symbols | `numpy.float64` |
+| Pattern type | Exact dtype | 來源 |
+|---|---|---|
+| `nrz_random`，`count > 0` | `numpy.dtype("long")` | `np.random.randint`／`RandomState.randint` 的 legacy 預設輸出型別為 C `long` |
+| `nrz_random`，`count == 0` | `numpy.dtype(int)` | `patterns.py` early return `np.array([], dtype=int)` |
+| `nrz_all_zeros`、`nrz_all_ones`、`nrz_alternating`、`nrz_long_run`、`nrz_single_transition`、`nrz_single_bit_pulse` | `numpy.dtype(int)` | `np.zeros`／`np.ones`／`np.empty`／`np.full` 帶 `dtype=int`；`nrz_long_run` 為 `.astype(int)`；`count == 0` 的 early return 為 `np.array([], dtype=int)` |
+| `nrz_user_bits` | `numpy.dtype(int)` | 本 contract 自有轉換，見 §7 |
+| `nrz_prbs` | `numpy.int8` | `docs/PRBS_CONVENTION.md` §6.1 |
+| `pam4_random`、`pam4_user_symbols` | `numpy.float64` | canonical level array 與 §7 user-symbol 轉換 |
 
-不得為了統一外觀silent cast：PRBS不可cast成native int，一般NRZ不可cast成int8。
+### `numpy.dtype("long")` 與 `numpy.dtype(int)` 的差異
+
+NumPy 2.x 起，`numpy.dtype(int)`（Python `int` 對應的 default integer）與 `numpy.dtype("long")`（C `long`）在 Windows 上**不再是同一型別**。兩個 alias 都是 portable 寫法，可直接用於 assertion，不需要在 test 中硬寫 `int32`／`int64`。
+
+Amendment 1 實測（Windows／AMD64／Python 3.12.10；NumPy 2.4.3 與 2.5.1 結果一致）：
+
+```text
+numpy.dtype(int)     -> int64
+numpy.dtype("long")  -> int32
+```
+
+在 LP64 平台（Linux／macOS x86-64、arm64）C `long` 為 64-bit，兩個 alias 預期重合，`nrz_random` 與 deterministic 輸出的 dtype 屆時會相同。此推論來自平台 ABI，**未在 Amendment 1 實測**；CI 目前只跑 Windows，故不作為凍結事實。
+
+alias 比對在兩種情形下皆成立，因此 assertion 必須寫成 alias 比對，不得硬寫 `int32`／`int64`：
+
+```python
+assert result.values.dtype == numpy.dtype("long")   # nrz_random, count > 0
+assert result.values.dtype == numpy.dtype(int)      # deterministic / nrz_user_bits
+```
+
+### 已知 legacy 不一致：`nrz_random` 的 `count == 0`
+
+`generate_random_nrz_bits()` 在 `count == 0` 與 `count > 0` 兩條路徑回傳不同 dtype。這是 `pcie_eq/patterns.py` 既有行為，V1 **原樣保留**：
+
+- 這是 pattern core 的缺陷，不是 Pattern Configuration 的缺陷。
+- 修正它會改變 `pcie_eq/patterns.py`，超出 §15 file boundary。
+- 在此以 cast 掩蓋會同時違反 §13 與本節 passthrough 原則。
+
+實作者不得因為這一項觸發 §17 stop condition；本節即為已核准的處置。修正需另立獨立 Issue，並在同一個 PR 內同步更新本節與 §9 dtype matrix。
+
+### 禁止 cast
+
+不得為了統一外觀silent cast：PRBS不可cast成native int，一般NRZ不可cast成int8，`nrz_random` 不可為了對齊 deterministic 而 cast 成 `numpy.dtype(int)`，反之亦然。
 
 ### Value domain
 
@@ -439,9 +484,11 @@ PatternConfig(pattern_type="nrz_random", count=10, seed=42)
 modulation: nrz
 domain: bits
 rng_mode: seeded
-dtype: numpy.dtype(int)
+dtype: numpy.dtype("long")
 values: [0,1,0,0,0,1,0,0,0,1]
 ```
+
+`count=10 > 0`，故適用 §9 的 `nrz_random` random path dtype，不是 `numpy.dtype(int)`。
 
 ### Long run
 
@@ -526,6 +573,7 @@ Expected values必須hardcode或由test-side獨立formulation取得；不得呼�
 - Explicit seed不修改global RNG。
 - `seed=None`與direct legacy `np.random.randint`在相同pre-state下exact一致。
 - Invalid config與count zero不消耗global RNG。
+- `nrz_random` `count > 0` dtype為 `numpy.dtype("long")`；`count == 0` dtype為 `numpy.dtype(int)`。兩者必須各有一個獨立 case，不得只測其中一條路徑。
 
 ### Deterministic NRZ
 
@@ -561,7 +609,9 @@ Expected values必須hardcode或由test-side獨立formulation取得；不得呼�
 ### Output／compatibility
 
 - Exact ndarray、shape、dtype、C-contiguous與value set。
-- General NRZ native int、PRBS int8、PAM4 float64均不被cast。
+- 11 種 pattern type 逐一比對 §9 dtype matrix，使用 `numpy.dtype("long")`／`numpy.dtype(int)`／`numpy.int8`／`numpy.float64` alias assertion，不得硬寫 `int32`／`int64`。
+- `nrz_random`、deterministic NRZ、PRBS 與 PAM4 均不被cast：任何一組的 dtype 都不得因為經過 `generate_pattern()` 而與直接呼叫 `pcie_eq.patterns` 不同。
+- dtype assertion 為 hardcoded alias 常數，不得呼叫 production generator 取得 expected dtype（§14 開頭的 oracle 規則同樣適用於 dtype）。
 - New module無PyQt、PySide、pyqtgraph、main、GUI、pipeline或controller import。
 - `pcie_eq.patterns` public API不變。
 - Window、controllers、random wrapper與GUI call sequence不變。
@@ -624,6 +674,15 @@ PCIE-TX-EQ-Simulator_Product_Roadmap.md
 
 Taxonomy、default、dtype、seed policy、serialization key或allowed claim的任何修改，均需獨立docs PR與Merge Gate。
 
+### 已處置事項
+
+下列情況先前會觸發stop condition，現已由 Amendment 1 明文處置，實作者不得再以此停止：
+
+- `nrz_random` 與 deterministic NRZ 的 dtype 不同 → 依 §9 dtype matrix 原樣保留。
+- `nrz_random` 在 `count == 0` 與 `count > 0` 回傳不同 dtype → 依 §9「已知 legacy 不一致」原樣保留。
+
+其餘任何 dtype 與本文件不符的情形，仍必須停止。
+
 ---
 
 ## 18. Acceptance Gate for Future Code PR
@@ -633,8 +692,71 @@ Taxonomy、default、dtype、seed policy、serialization key或allowed claim的�
 - Constructor validation、defaults、irrelevant-field rejection與validation matrix通過。
 - Random／PRBS output與既有core bit-exact一致。
 - Global RNG、dtype、shape、raw values與GUI baseline不變。
+- 11種pattern的exact dtype符合 §9 dtype matrix，且 `nrz_random` 的 `count == 0`／`count > 0` 兩條路徑各有獨立 test。
 - Serialization exact round-trip且unknown version拒絕。
 - Module boundary通過。
 - Existing 192 tests全部通過，總數增加。
 - GitHub Actions、`import main`與`git diff --check`通過。
 - 無GUI、pipeline、TXEQ、Channel、RXEQ、Preset或simulation math變更。
+
+---
+
+## 19. Amendment Record
+
+### 19.1 Amendment 1（2026-08-06）：NRZ integer dtype
+
+**問題。** 原 §9 dtype matrix 要求 general NRZ random 與 deterministic pattern 的輸出 dtype 一律為 exact `numpy.dtype(int)`。此條款在 NumPy 2.x + Windows 上與現有 `pcie_eq/patterns.py` 行為衝突：`generate_random_nrz_bits()` 於 `count > 0` 時回傳 C `long`（Windows 為 `int32`），而 `numpy.dtype(int)` 為 `int64`。
+
+原條款無法被滿足：
+
+- 依契約撰寫 assertion，Implementation 25 的 test 必定失敗。
+- 加 cast 使其通過，違反 §13 禁止 coercion 與 §9 禁止 silent cast。
+- 修改 `pcie_eq/patterns.py` 使其一致，違反 §15 file boundary。
+
+三條路徑皆被既有條款封死，故 Implementation 25 在本 Amendment 前無法在不違約的情況下完成。
+
+**處置。** 將 dtype 條款由「指定目標型別」改為「記錄既有 generator 的 passthrough 行為」，並補上 `numpy.dtype("long")` 與 `numpy.dtype(int)` 的 alias 區分。同時明文接受 `nrz_random` 在 `count == 0` 的既有 dtype 不一致，避免實作者誤觸 stop condition。
+
+**未變更事項。** 本 Amendment 不更動 taxonomy、field applicability、validation rule、RNG contract、serialization key set、golden values 或 allowed／forbidden claims。輸出的 value 與 shape 完全不變，僅修正對 dtype 的描述。
+
+**Contract ID 維持 `pcie_eq-pattern-config-v1`。** 尚無任何已合併的 v1 reader 或 serialized artifact，`schema_version` 的接受集合亦未改變，故不需要新的 contract ID。
+
+**受影響章節。** §2、§9、§12、§14、§17、§18。
+
+### 19.2 Amendment 1 measurement
+
+環境：
+
+```text
+Windows / AMD64 / Python 3.12.10
+NumPy 2.4.3（複核：NumPy 2.5.1，結果相同）
+Repository at c4fd8c8191919c30d8e28383d94804fe3e68db25 + docs-only commits
+```
+
+NumPy alias 解析：
+
+```text
+numpy.dtype(int)    -> int64
+numpy.dtype("long") -> int32
+numpy.dtype(int) == numpy.dtype("long")  -> False
+```
+
+Generator 實測 dtype：
+
+```text
+generator                 count=0      count=8
+nrz_random (seed=None)    int64        int32     不一致
+nrz_random (seed=42)      int64        int32     不一致
+nrz_all_zeros             int64        int64
+nrz_all_ones              int64        int64
+nrz_alternating           int64        int64
+nrz_long_run              int64        int64
+nrz_single_transition     int64        int64
+nrz_single_bit_pulse      raises       int64
+nrz_prbs (order=7)        int8         int8
+pam4_random (seed=42)     float64      float64
+```
+
+複核方式：`np.random.randint(0, 2, 5).dtype` 與 `np.random.RandomState(42).randint(0, 2, 5).dtype` 均為 `int32`，`np.zeros(5, dtype=int).dtype` 與 `np.array([], dtype=int).dtype` 均為 `int64`，確認差異來自 NumPy legacy RNG 的 C `long` 預設，而非本專案 code。
+
+現有 `tests/test_patterns.py` 已針對同一現象分岔（`if window.bits.dtype == np.int32:` 提供兩組 SHA fingerprint），可作為此行為早已存在於 repository 的旁證。
