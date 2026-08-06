@@ -12,11 +12,11 @@
 
 ## 1. 目的與界線
 
-本文件定義 GUI-independent discrete impulse convolution v1，使兩個一維實數離散序列可透過單一、可序列化、可驗證的 request／result boundary執行線性卷積。
+本文件定義 GUI-independent discrete impulse convolution v1，使兩個一維實數離散序列可透過單一、可序列化、可驗證的 request／result boundary 執行線性卷積。
 
-本Contract是專案自有數值primitive，不是PCI-SIG channel specification、Reference Channel、S-parameter model、insertion-loss model或實際線材／PCB correlation model。
+本 Contract 是專案自有數值 primitive，不是 PCI-SIG channel specification、Reference Channel、S-parameter model、insertion-loss model 或實際線材／PCB correlation model。
 
-文件合併後，production implementation只能依本文件修改pure code與tests。若NumPy behavior、existing repository boundary或測試evidence與本文件衝突，必須停止並由Planner／Reviewer另開docs-only PR；不得自行修改mode、alignment、dtype、normalization、serialization或claims。
+文件合併後，production implementation 只能依本文件修改 pure code 與 tests。若 NumPy behavior、existing repository boundary 或 validation evidence 與本文件衝突，必須停止並由 Planner／Reviewer 另開 docs-only PR；不得自行修改 mode、alignment、dtype、normalization、serialization 或 claims。
 
 ### 1.1 模型等級
 
@@ -27,17 +27,17 @@ discrete linear convolution / project-owned numerical primitive
 ### 1.2 Allowed claims
 
 - Deterministic discrete linear convolution primitive。
-- Explicit `full`、wave-aligned `same`與full-overlap `valid` semantics。
-- Explicit impulse lag-zero index與output start index。
-- Exact dtype、shape、empty、copy與serialization contract。
+- Explicit `full`、wave-aligned `same` 與 full-overlap `valid` semantics。
+- Explicit impulse lag-zero index 與 output start index。
+- Exact dtype、shape、empty、copy 與 serialization contract。
 
 ### 1.3 Forbidden claims
 
-- PCIe-compliant channel或PCI-SIG Reference Channel。
-- Physical insertion loss、frequency response、trace length、connector／via loss或S-parameter behavior。
-- Physical seconds、UI、Hz、baud或distance interpretation。
-- Continuous-time convolution、automatic resampling或correlation result。
-- Impulse response本身已經validated、normalized或代表真實硬體。
+- PCIe-compliant channel 或 PCI-SIG Reference Channel。
+- Physical insertion loss、frequency response、trace length、connector／via loss 或 S-parameter behavior。
+- Physical seconds、UI、Hz、baud 或 distance interpretation。
+- Continuous-time convolution、automatic resampling 或 correlation result。
+- Impulse response 本身已經 validated、normalized 或代表真實硬體。
 
 ---
 
@@ -51,12 +51,12 @@ discrete linear convolution / project-owned numerical primitive
 | `docs/TECHNICAL_AUDIT_2026-08-06.md` | Repository | Step 2.5 entry requirements and baseline migration rules |
 | `pcie_eq/channel_config.py` | Repository | Existing GUI-independent request/result pattern and strict validation style |
 
-NumPy documents `full`、`same`與`valid`, but this project only delegates `mode="full"`. Project `same` and `valid` are explicit slices of the full result so alignment remains tied to the waveform index and `impulse_zero_index`.
+NumPy documents `full`、`same` 與 `valid`，但本專案只委派 `mode="full"`。Project `same` 與 `valid` 是 full result 的明示 slices，使 alignment 維持在 waveform index 與 `impulse_zero_index` 上。
 
 ### 2.1 Independent validation strategy
 
 - Test-side direct summation implementation for full convolution。
-- Hardcoded full／same／valid vectors with a non-centered zero index。
+- Hardcoded full／same／valid vectors with non-centered zero index。
 - Delta impulse identity and alignment cases。
 - Dtype、empty、ownership、serialization and helper-failure tests。
 - Monkeypatch verification that production calls NumPy with exact `mode="full"` only。
@@ -65,7 +65,7 @@ NumPy documents `full`、`same`與`valid`, but this project only delegates `mode
 
 ## 3. Frozen Scope
 
-V1 supports exactly:
+V1 supports exactly：
 
 ```text
 full
@@ -73,7 +73,7 @@ same
 valid
 ```
 
-V1 excludes:
+V1 excludes：
 
 ```text
 FFT convolution
@@ -88,13 +88,13 @@ cursor extraction
 frequency response
 ```
 
-V1 does not modify `pcie_eq.channel_config`, `pcie_eq.channel`, models, pipeline or GUI.
+V1 does not modify `pcie_eq.channel_config`、`pcie_eq.channel`、models、pipeline or GUI。
 
 ---
 
 ## 4. Frozen Public API
 
-Production implementation adds:
+Production implementation adds：
 
 ```text
 pcie_eq/impulse_convolution.py
@@ -141,9 +141,9 @@ Exact `__all__` order：
 ]
 ```
 
-`ImpulseConvolutionConfig.__post_init__()` validates all configuration fields possible without array lengths. `convolve_impulse()` defensively revalidates the original config before converting either input and completes the impulse-length-dependent zero-index check after impulse validation.
+`ImpulseConvolutionConfig.__post_init__()` validates all fields possible without array lengths。`convolve_impulse()` defensively revalidates the original config before converting either input，then completes the impulse-length-dependent zero-index check。
 
-V1 provides no subclass hierarchy、plugin registry、async API or hidden defaults beyond the dataclass defaults shown above。
+V1 provides no subclass hierarchy、plugin registry、async API or hidden defaults beyond those shown above。
 
 ---
 
@@ -169,9 +169,9 @@ V1 provides no subclass hierarchy、plugin registry、async API or hidden defaul
 - Exact Python `int` only。
 - `bool` and NumPy integer scalars：`TypeError`。
 - Constructor requires `>= 0`; negative：`ValueError`。
-- `convolve_impulse()` requires `< len(impulse)` after impulse validation; otherwise `ValueError`。
+- `convolve_impulse()` requires `< len(impulse)` after impulse validation；otherwise `ValueError`。
 - It identifies the impulse tap representing lag 0。
-- The implementation must not infer it fromargmax、first nonzero、center index or any heuristic。
+- The implementation must not infer it from argmax、first nonzero、center index or any heuristic。
 
 ---
 
@@ -207,7 +207,7 @@ Additional impulse rule：
 - Caller wave and impulse are never modified。
 - Returned values never share memory with caller ndarray inputs。
 - Returned values are never the same object as either caller input。
-- Output is a new C-contiguous ndarray。
+- Output is C-contiguous。
 
 ---
 
@@ -215,23 +215,21 @@ Additional impulse rule：
 
 `convolve_impulse()` uses this order：
 
-1. Require exact config type：`type(config) is ImpulseConvolutionConfig`; subclass or other type → `TypeError`。
+1. Require exact config type：`type(config) is ImpulseConvolutionConfig`；subclass or other type → `TypeError`。
 2. Defensively revalidate original schema、mode and zero-index type／nonnegative value。
 3. Materialize and validate wave。
 4. Materialize and validate impulse。
 5. Reject empty impulse and validate `impulse_zero_index < len(impulse)`。
 6. Resolve exact output dtype。
 7. Build a new resolved config。
-8. If wave is empty, return the frozen empty result without calling NumPy convolution。
-9. Convert working arrays to the resolved dtype。
+8. If wave is empty，return the frozen empty result without calling NumPy convolution。
+9. Convert working arrays to resolved dtype。
 10. Call the production helper with exact `numpy.convolve(wave_work, impulse_work, mode="full")`。
 11. Validate raw full helper output。
-12. Apply exact project slicing for the requested mode。
+12. Apply exact project mode selection／slicing。
 13. Validate final output and return result。
 
-Config validation must occur before either input conversion so a corrupted frozen config is rejected deterministically。
-
-Wave validation precedes impulse validation; when both inputs are invalid, the wave error is raised first。
+Config validation must occur before either input conversion。Wave validation precedes impulse validation；when both inputs are invalid，the wave error is raised first。
 
 ---
 
@@ -243,7 +241,7 @@ V1 is sample-index domain：
 - One index step represents one common discrete sample step。
 - No sample-interval field is added in V1。
 - No resampling、interpolation or tolerance comparison occurs。
-- No multiplication by `Δt` occurs；this API implements discrete-time convolution, not continuous-time numerical integration。
+- No multiplication by `Δt` occurs；this API implements discrete-time convolution，not continuous-time numerical integration。
 - Future Scenario／measurement adapters carrying physical sample metadata must validate compatibility before calling this core。
 
 No result from this API alone may be interpreted in seconds、UI、Hz or physical distance。
@@ -272,12 +270,12 @@ Rules：
   - float16 + float16 → float16。
   - float32 + float32 → float32。
   - float32 + float64 → float64。
-  - float32 + int16 → NumPy result type, expected float32 under the pinned CI behavior。
+  - float32 + int16 → float32 under pinned CI behavior。
   - int16 + uint8 → float64。
   - bool + bool → float64。
 - Empty wave follows the same dtype resolution using the non-empty impulse dtype。
 - Complex inputs are rejected before dtype resolution。
-- No post-convolution cast is permitted to hide helper mismatch。
+- No post-convolution cast may hide a helper mismatch。
 
 ---
 
@@ -311,11 +309,11 @@ For non-empty wave：
 
 ```text
 output length = N + M - 1
-values = full_result
+values = validated full_result
 output_start_index = -z
 ```
 
-`output_start_index` is the coordinate, in waveform sample-index units, represented by `values[0]`。
+`values[0]` represents waveform sample-index coordinate `-z`。
 
 ### 10.2 `same`
 
@@ -323,33 +321,31 @@ For non-empty wave：
 
 ```text
 output length = N
-values = full_result[z : z + N]
+values = a new C-contiguous copy of full_result[z : z + N]
 output_start_index = 0
 ```
 
-The returned values correspond exactly to waveform coordinates `0 ... N-1`。
+Returned values correspond exactly to waveform coordinates `0 ... N-1`。
 
-This semantics intentionally differs from NumPy `mode="same"` when impulse is longer than wave or when the requested zero index is not NumPy's centered crop。
+This intentionally differs from NumPy `mode="same"` when impulse is longer than wave or the requested zero index differs from NumPy's centered crop。
 
 ### 10.3 `valid`
 
 For non-empty wave：
 
-- Require `N >= M`; otherwise `ValueError`。
+- Require `N >= M`；otherwise `ValueError`。
 
 ```text
 output length = N - M + 1
-values = full_result[M - 1 : N]
+values = a new C-contiguous copy of full_result[M - 1 : N]
 output_start_index = M - 1 - z
 ```
 
-Only positions where the entire impulse support lies within the waveform support are retained。
-
-This semantics intentionally does not swap operands when impulse is longer than wave。
+Only positions where the entire impulse support lies within waveform support are retained。This intentionally does not swap operands when impulse is longer than wave。
 
 ### 10.4 Empty wave
 
-After validating a non-empty impulse and valid zero index, all modes return：
+After validating a non-empty impulse and valid zero index，all modes return：
 
 ```text
 values shape = (0,)
@@ -362,15 +358,15 @@ The implementation must not call NumPy convolution for an empty wave。
 
 ---
 
-## 11. Normalization, Padding and Truncation
+## 11. Normalization、Padding and Truncation
 
 - No peak、sum、energy or area normalization。
 - No implicit sample-interval scaling。
 - No trimming of leading or trailing impulse zeros。
 - No impulse padding or repetition。
-- `full` endpoint behavior is the standard zero extension implied by discrete full convolution。
+- `full` endpoint behavior is standard zero extension implied by discrete full convolution。
 - `same` and `valid` use only the exact slices specified in Section 10。
-- All-zero impulse returns exact zeros in the resolved dtype。
+- All-zero impulse returns exact zeros in resolved dtype。
 
 ---
 
@@ -378,31 +374,37 @@ The implementation must not call NumPy convolution for an empty wave。
 
 ### 12.1 Raw full helper output
 
-For non-empty wave, helper output must be：
+For non-empty wave，helper output must be：
 
-- Exact `numpy.ndarray`; ndarray subclass is invalid。
+- Exact `numpy.ndarray`；ndarray subclass is invalid。
 - 1D。
 - Shape exact `(N + M - 1,)`。
 - Dtype exact `expected_dtype`。
 - C-contiguous。
 - Finite。
 - Not the same object as either working input。
-- Not sharing memory with caller wave or impulse ndarrays。
+- Not sharing memory with either working input or caller ndarray input。
 
 Any violation raises `RuntimeError`。No silent cast、copy、reshape or repair is allowed。
 
 ### 12.2 Final output
 
-Final values must be：
+Common requirements：
 
 - Exact `numpy.ndarray`。
-- 1D with the exact mode-specific length。
+- 1D with exact mode-specific length。
 - Dtype exact `expected_dtype`。
-- C-contiguous。
-- Finite。
-- New independent storage，不與wave、impulse或raw helper output共享可寫memory。
+- C-contiguous and finite。
+- Not the same object as either caller input。
+- Not sharing memory with caller wave or impulse ndarray。
 
-For `same` and `valid`, producing a new C-contiguous copy of the exact specified slice is part of the mode definition, not a helper-repair path。
+Mode-specific ownership：
+
+- `full` may return the already validated raw full helper ndarray directly。
+- `same` and `valid` must return a new C-contiguous copy of the exact specified slice and must not share memory with raw full helper output。
+- Empty-wave result is a newly allocated empty ndarray in expected dtype。
+
+Creating the exact `same`／`valid` slice copy is part of mode semantics，not a helper-repair path。
 
 ### 12.3 Result metadata
 
@@ -412,7 +414,7 @@ output_start_index: exact Python int
 model_level: "discrete_linear_convolution"
 ```
 
-`ImpulseConvolutionResult` is frozen but does not make the ndarray contents immutable；caller mutation of result values must not affect either input。
+`ImpulseConvolutionResult` is frozen but does not make ndarray contents immutable。Mutating result values must not affect either input。
 
 ---
 
@@ -430,16 +432,16 @@ impulse_zero_index
 
 - Returns a new dictionary on every call。
 - Uses only JSON-safe string／integer scalars。
-- Contains exactly the three canonical keys in the specified order。
+- Contains exactly the three canonical keys in specified order。
 
 ### 13.2 `from_dict()`
 
-- Input must be `collections.abc.Mapping`; otherwise `TypeError`。
-- Key set must exactly match the canonical set。
-- Missing／extra keys：`ValueError` and message lists the affected keys。
+- Input must be `collections.abc.Mapping`；otherwise `TypeError`。
+- Key set must exactly match canonical set。
+- Missing／extra keys：`ValueError` and message lists affected keys。
 - Wrong schema type：`TypeError`。
 - Unknown schema string：`ValueError`。
-- Semantic validation occurs through the constructor。
+- Semantic validation occurs through constructor。
 - No aliases、camelCase、nested parameters or migration guessing。
 
 ### 13.3 Round-trip
@@ -547,8 +549,7 @@ Future implementation tests at minimum：
 - Non-centered zero-index cases。
 - Delta alignment。
 - `valid` when `N < M` rejection。
-- Single-tap impulse。
-- All-zero impulse。
+- Single-tap impulse and all-zero impulse。
 - Exact output start indices。
 
 ### 15.5 Dtype validation
@@ -567,8 +568,8 @@ Monkeypatch helper to return：
 - Wrong shape。
 - Wrong dtype。
 - Non-C-contiguous output。
-- Caller wave object／alias。
-- Caller impulse object／alias。
+- Working or caller wave alias。
+- Working or caller impulse alias。
 - Non-finite output。
 
 Each must raise `RuntimeError` without repair。
@@ -641,7 +642,7 @@ PCIE-TX-EQ-Simulator_Product_Roadmap.md
 
 ## 17. Implementation PR Contract
 
-After this document is merged, Gemini implementation uses：
+After this document is merged，Gemini implementation uses：
 
 ```text
 Branch: feature/implement-impulse-response-convolution
@@ -659,13 +660,13 @@ Contract merge: <authoritative merge SHA>
 
 It must report base/head SHA、exact changed files、pytest count、GitHub Actions run、import result、GUI smoke and `git diff --check`。
 
-Gemini must stop after opening the Draft PR and must not mark ready、merge、close the issue or begin ChannelConfig integration。
+Gemini must stop after opening Draft PR and must not mark ready、merge、close issue or begin ChannelConfig integration。
 
 ---
 
 ## 18. Acceptance Gate
 
-The implementation passes only when：
+Implementation passes only when：
 
 - Exact v1 API、validation、mode and serialization contracts are implemented。
 - Full／same／valid values and output coordinates match hardcoded and independent golden cases。
@@ -681,7 +682,7 @@ The implementation passes only when：
 
 Stop and request a docs-only correction when：
 
-- NumPy 2.4 result dtype differs from the frozen matrix。
+- NumPy 2.4 result dtype differs from frozen matrix。
 - Exact aligned same／valid slices conflict with a required existing behavior。
 - A silent cast、reshape or helper repair would be needed。
 - Existing repository imports force GUI、pipeline or ChannelConfig coupling。
