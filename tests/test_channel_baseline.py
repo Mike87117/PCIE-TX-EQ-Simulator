@@ -182,3 +182,99 @@ def test_channel_edge_case_alphas():
     # i=3: 3.0 + 2.0*(4.0 - 3.0) = 5.0
     out_two = simple_channel(wave, alpha=2.0)
     np.testing.assert_allclose(out_two, np.array([1.0, 3.0, 3.0, 5.0]), rtol=1e-7, atol=1e-7)
+
+
+def test_channel_dtype_matrix_and_numerical_equivalence():
+    """Verify simple_channel converts integer/bool inputs to float64, preserves floating dtypes, and matches float64 reference."""
+    values = [0, 1, 1, 0, 1]
+    ref_expected = simple_channel(np.array(values, dtype=np.float64), alpha=0.08)
+
+    int_dtypes = [np.int8, np.int16, np.int32, np.int64]
+    uint_dtypes = [np.uint8, np.uint16, np.uint32, np.uint64]
+
+    for dt in int_dtypes + uint_dtypes:
+        w = np.array(values, dtype=dt)
+        w_copy = w.copy()
+        out = simple_channel(w, alpha=0.08)
+        assert out.dtype == np.float64
+        np.testing.assert_array_equal(w, w_copy)
+        np.testing.assert_allclose(out, ref_expected, rtol=1e-6, atol=1e-6)
+
+    # Boolean input
+    w_bool = np.array([False, True, True, False, True], dtype=bool)
+    w_bool_copy = w_bool.copy()
+    out_bool = simple_channel(w_bool, alpha=0.08)
+    assert out_bool.dtype == np.float64
+    np.testing.assert_array_equal(w_bool, w_bool_copy)
+    np.testing.assert_allclose(out_bool, ref_expected, rtol=1e-6, atol=1e-6)
+
+    # Floating dtypes preservation
+    float_dtypes = [np.float16, np.float32, np.float64]
+    for fdt in float_dtypes:
+        w_flt = np.array([0.0, 1.0, 1.0, 0.0, 1.0], dtype=fdt)
+        out_flt = simple_channel(w_flt, alpha=0.08)
+        assert out_flt.dtype == fdt
+
+
+def test_channel_empty_inputs_matrix():
+    """Verify empty input behavior for signed/unsigned int, bool, float32, float64, list, and tuple."""
+    empty_cases = [
+        (np.array([], dtype=np.int32), np.float64),
+        (np.array([], dtype=np.uint8), np.float64),
+        (np.array([], dtype=bool), np.float64),
+        (np.array([], dtype=np.float32), np.float32),
+        (np.array([], dtype=np.float64), np.float64),
+        ([], np.float64),
+        ((), np.float64),
+    ]
+
+    for empty_input, expected_dtype in empty_cases:
+        out = simple_channel(empty_input, alpha=0.08)
+        assert isinstance(out, np.ndarray)
+        assert out.shape == (0,)
+        assert out.dtype == expected_dtype
+
+
+def test_channel_invalid_inputs_rejection():
+    """Verify scalar, >1D, complex, string, and object inputs are actively rejected before recurrence."""
+    import pytest
+
+    # Scalar rejection (ValueError)
+    for scalar in [5, 5.0, np.float64(5.0)]:
+        with pytest.raises(ValueError):
+            simple_channel(scalar)
+
+    # 2D rejection (ValueError)
+    with pytest.raises(ValueError):
+        simple_channel(np.array([[1.0, 2.0], [3.0, 4.0]]))
+
+    # Complex rejection (TypeError)
+    with pytest.raises(TypeError):
+        simple_channel(np.array([1 + 2j, 3 + 4j], dtype=np.complex64))
+    with pytest.raises(TypeError):
+        simple_channel(np.array([1 + 2j, 3 + 4j], dtype=np.complex128))
+    with pytest.raises(TypeError):
+        simple_channel([1 + 2j, 3 + 4j])
+
+    # String rejection (TypeError)
+    with pytest.raises(TypeError):
+        simple_channel(np.array(["1.0", "2.0"]))
+
+    # Object rejection (TypeError)
+    with pytest.raises(TypeError):
+        simple_channel(np.array([object(), object()]))
+
+
+def test_channel_immutability_and_non_aliasing():
+    """Verify simple_channel never mutates input array and never shares memory with input array."""
+    # Non-empty array
+    wave = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    wave_copy = wave.copy()
+    out = simple_channel(wave, alpha=0.08)
+    np.testing.assert_array_equal(wave, wave_copy)
+    assert not np.shares_memory(out, wave)
+
+    # Empty array
+    empty_wave = np.array([], dtype=np.float64)
+    out_empty = simple_channel(empty_wave, alpha=0.08)
+    assert not np.shares_memory(out_empty, empty_wave)

@@ -20,15 +20,22 @@ def simple_channel(wave, alpha=0.08):
 
     Empty input returns an empty array rather than raising.
     """
-    wave = np.asarray(wave)
-    if not np.issubdtype(wave.dtype, np.floating):
-        wave = wave.astype(np.float64)
+    arr = np.asarray(wave)
+    if arr.ndim != 1:
+        raise ValueError(f"wave must be a 1D array, got shape {arr.shape}")
+    if arr.dtype.kind not in {"b", "i", "u", "f"}:
+        raise TypeError(f"wave must have real numeric dtype, got dtype {arr.dtype}")
 
-    out = np.zeros_like(wave)
-    if wave.size == 0:
+    if arr.dtype.kind != "f":
+        work = arr.astype(np.float64)
+    else:
+        work = arr
+
+    out = np.empty(len(work), dtype=work.dtype)
+    if work.size == 0:
         return out
 
-    out[0] = wave[0]
-    for i in range(1, len(wave)):
-        out[i] = out[i - 1] + alpha * (wave[i] - out[i - 1])
+    out[0] = work[0]
+    for i in range(1, len(work)):
+        out[i] = out[i - 1] + alpha * (work[i] - out[i - 1])
     return out
