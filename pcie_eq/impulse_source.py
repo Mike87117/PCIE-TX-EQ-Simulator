@@ -60,7 +60,7 @@ class ImpulseSourceConfig:
     values: tuple[float, ...] | None = None
     schema_version: str = IMPULSE_SOURCE_CONTRACT_ID
 
-    def _validate(self) -> None:
+    def _validate_and_canonicalize(self) -> None:
         # 1. schema_version
         if type(self.schema_version) is not str:
             raise TypeError(f"schema_version must be str, got {type(self.schema_version).__name__}")
@@ -148,11 +148,16 @@ class ImpulseSourceConfig:
             if self.values is None:
                 raise ValueError("Field 'values' is required for source_type 'user_defined'")
 
-            # Dimensionality and type validation
-            try:
-                arr = np.asarray(self.values)
-            except Exception as e:
-                raise TypeError(f"Failed to convert user_defined values to ndarray: {e}") from e
+            # Restrict constructor input types to list, tuple, ndarray, or numeric scalars (rejected by ndim!=1)
+            raw_values = self.values
+            if isinstance(raw_values, np.ndarray):
+                arr = np.asarray(raw_values)
+            elif type(raw_values) in (list, tuple):
+                arr = np.asarray(raw_values)
+            elif type(raw_values) in (bool, int, float, complex):
+                arr = np.asarray(raw_values)
+            else:
+                raise TypeError("user_defined values must be a list, tuple, or 1D ndarray")
 
             if arr.ndim != 1:
                 raise ValueError(f"user_defined values must be 1D, got ndim={arr.ndim}")
@@ -179,7 +184,7 @@ class ImpulseSourceConfig:
             )
 
     def __post_init__(self) -> None:
-        self._validate()
+        self._validate_and_canonicalize()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -230,6 +235,103 @@ class ImpulseSourceConfig:
         )
 
 
+def _validate_canonical_config(config: ImpulseSourceConfig) -> None:
+    """Build-time exact canonical validation (does NOT mutate or repair config)."""
+    if type(config.schema_version) is not str:
+        raise TypeError(f"schema_version must be str, got {type(config.schema_version).__name__}")
+    if config.schema_version != IMPULSE_SOURCE_CONTRACT_ID:
+        raise ValueError(f"Unknown schema_version '{config.schema_version}', expected '{IMPULSE_SOURCE_CONTRACT_ID}'")
+
+    if type(config.source_type) is not str:
+        raise TypeError(f"source_type must be str, got {type(config.source_type).__name__}")
+    if config.source_type not in SUPPORTED_SOURCE_TYPES:
+        raise ValueError(f"Unsupported source_type '{config.source_type}'")
+
+    if type(config.sample_interval) is not float:
+        raise TypeError(f"sample_interval must be float, got {type(config.sample_interval).__name__}")
+    if not math.isfinite(config.sample_interval):
+        raise ValueError(f"sample_interval must be finite, got {config.sample_interval}")
+    if config.sample_interval <= 0.0:
+        raise ValueError(f"sample_interval must be > 0, got {config.sample_interval}")
+
+    if type(config.normalization) is not str:
+        raise TypeError(f"normalization must be str, got {type(config.normalization).__name__}")
+    if config.normalization not in SUPPORTED_NORMALIZATION:
+        raise ValueError(f"Unsupported normalization '{config.normalization}'")
+
+    if type(config.impulse_zero_index) is not int:
+        raise TypeError(f"impulse_zero_index must be int, got {type(config.impulse_zero_index).__name__}")
+    if config.impulse_zero_index < 0:
+        raise ValueError(f"impulse_zero_index must be >= 0, got {config.impulse_zero_index}")
+
+    if config.source_type == "single_tap":
+        if config.decay_ratio is not None:
+            raise ValueError("Field 'decay_ratio' is irrelevant for source_type 'single_tap'")
+        if config.values is not None:
+            raise ValueError("Field 'values' is irrelevant for source_type 'single_tap'")
+
+        if type(config.length) is not int:
+            raise TypeError(f"length must be int, got {type(config.length).__name__}")
+        if config.length < 1:
+            raise ValueError(f"length must be >= 1, got {config.length}")
+
+        if type(config.amplitude) is not float:
+            raise TypeError(f"amplitude must be float, got {type(config.amplitude).__name__}")
+        if not math.isfinite(config.amplitude):
+            raise ValueError(f"amplitude must be finite, got {config.amplitude}")
+
+        resolved_len = config.length
+
+    elif config.source_type == "exponential_postcursor":
+        if config.values is not None:
+            raise ValueError("Field 'values' is irrelevant for source_type 'exponential_postcursor'")
+
+        if type(config.length) is not int:
+            raise TypeError(f"length must be int, got {type(config.length).__name__}")
+        if config.length < 1:
+            raise ValueError(f"length must be >= 1, got {config.length}")
+
+        if type(config.amplitude) is not float:
+            raise TypeError(f"amplitude must be float, got {type(config.amplitude).__name__}")
+        if not math.isfinite(config.amplitude):
+            raise ValueError(f"amplitude must be finite, got {config.amplitude}")
+
+        if type(config.decay_ratio) is not float:
+            raise TypeError(f"decay_ratio must be float, got {type(config.decay_ratio).__name__}")
+        if not math.isfinite(config.decay_ratio):
+            raise ValueError(f"decay_ratio must be finite, got {config.decay_ratio}")
+        if not (0.0 <= config.decay_ratio < 1.0):
+            raise ValueError(f"decay_ratio must be in range [0.0, 1.0), got {config.decay_ratio}")
+
+        resolved_len = config.length
+
+    elif config.source_type == "user_defined":
+        if config.length is not None:
+            raise ValueError("Field 'length' is irrelevant for source_type 'user_defined'")
+        if config.amplitude is not None:
+            raise ValueError("Field 'amplitude' is irrelevant for source_type 'user_defined'")
+        if config.decay_ratio is not None:
+            raise ValueError("Field 'decay_ratio' is irrelevant for source_type 'user_defined'")
+
+        if type(config.values) is not tuple:
+            raise TypeError(f"user_defined values must be tuple, got {type(config.values).__name__}")
+        if len(config.values) == 0:
+            raise ValueError("user_defined values must not be empty")
+
+        for v in config.values:
+            if type(v) is not float:
+                raise TypeError(f"user_defined value element must be float, got {type(v).__name__}")
+            if not math.isfinite(v):
+                raise ValueError("user_defined values elements must be finite")
+
+        resolved_len = len(config.values)
+
+    if config.impulse_zero_index >= resolved_len:
+        raise ValueError(
+            f"impulse_zero_index ({config.impulse_zero_index}) must be < resolved length ({resolved_len})"
+        )
+
+
 @dataclass(frozen=True)
 class ImpulseSourceResult:
     values: np.ndarray
@@ -259,8 +361,8 @@ def build_impulse(config: ImpulseSourceConfig) -> ImpulseSourceResult:
     if type(config) is not ImpulseSourceConfig:
         raise TypeError(f"config must be exactly ImpulseSourceConfig, got {type(config).__name__}")
 
-    # 2. Defensively revalidate the original frozen config
-    config._validate()
+    # 2. Build-time canonical validation without mutation or repair
+    _validate_canonical_config(config)
 
     # 3. Determine exact resolved length
     if config.source_type in ("single_tap", "exponential_postcursor"):
@@ -268,7 +370,7 @@ def build_impulse(config: ImpulseSourceConfig) -> ImpulseSourceResult:
     elif config.source_type == "user_defined":
         resolved_len = len(config.values)
 
-    # 4. Rebuild a new exact resolved config
+    # 4. Rebuild new exact resolved config
     resolved_config = ImpulseSourceConfig(
         schema_version=config.schema_version,
         source_type=config.source_type,

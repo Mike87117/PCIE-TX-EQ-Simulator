@@ -4,15 +4,18 @@ Unit tests for pcie_eq.impulse_source core module.
 Verifies:
 1. Public API surface, dataclass field exact defaults, frozen dataclasses, frozen instance mutation rejections, and exact ImpulseSourceConfig type/subclass check.
 2. Common field validations (schema, source_type, sample_interval, normalization variants, zero_index, defensive revalidation).
-3. Deterministic relevance rules, validation order, and irrelevant field rejections without materializing values.
-4. OverflowError protection for huge integer conversions across sample_interval, amplitude, and decay_ratio.
-5. single_tap mode golden vectors, boundary zero-indices, signed zero, and zero-amplitude behavior.
-6. exponential_postcursor mode golden vectors, direct formula comparison, decay_ratio=0, underflow, and ratio range rejections.
-7. user_defined mode list/tuple/ndarray/non-contiguous view matrix, bool/int/uint/float16/32/64 to float64, scalar/0D ValueError rejections, and mutation isolation.
-8. Output contract: exact float64 ndarray, C-contiguous, finite, new storage allocation, result mutation isolation, and internal _build_values failure matrix via monkeypatching.
-9. Serialization to_dict() / from_dict() canonical 9-key order, new dict/list allocations, mapping validation order, round-trips, and error handling.
+3. Restricted user_defined container input types: list, tuple, 1D ndarray accepted; range, generator, array.array, memoryview, and explosive __array__/__iter__ providers rejected with TypeError.
+4. Deterministic relevance rules, validation order, and irrelevant field rejections without materializing values.
+5. OverflowError protection for huge integer conversions across sample_interval, amplitude, and decay_ratio.
+6. single_tap mode golden vectors, boundary zero-indices, signed zero, and zero-amplitude behavior.
+7. exponential_postcursor mode golden vectors, direct formula comparison, decay_ratio=0, underflow, and ratio range rejections.
+8. user_defined mode list/tuple/ndarray/non-contiguous view matrix, bool/int/uint/float16/32/64 to float64, scalar/0D ValueError rejections, and mutation isolation.
+9. Decoupled build-time canonical validation: corrupted configs modified via object.__setattr__ fail build_impulse() without repair, preserving corrupted field state and never calling _build_values().
+10. Output contract: exact float64 ndarray, C-contiguous, finite, new storage allocation, result mutation isolation, and internal _build_values failure matrix via monkeypatching.
+11. Serialization to_dict() / from_dict() canonical 9-key order, new dict/list allocations, mapping validation order, round-trips, and error handling.
 """
 
+import array
 from dataclasses import FrozenInstanceError, fields
 import math
 import numpy as np
@@ -66,6 +69,44 @@ def test_impulse_source_frozen_mutation_and_subclass_rejection():
         build_impulse(sub_cfg)
 
 
+def test_user_defined_restricted_container_types_and_explosive_rejections():
+    """Verify user_defined accepts only list, tuple, 1D ndarray, and rejects range, generator, array.array, memoryview, and explosive providers."""
+    # Allowed container types
+    cfg_list = ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=[1.0, 2.0])
+    cfg_tuple = ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=(1.0, 2.0))
+    cfg_arr = ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=np.array([1.0, 2.0]))
+    assert build_impulse(cfg_list).values.shape == (2,)
+    assert build_impulse(cfg_tuple).values.shape == (2,)
+    assert build_impulse(cfg_arr).values.shape == (2,)
+
+    # Disallowed container types must raise TypeError without invoking __array__ or __iter__
+    with pytest.raises(TypeError, match="must be a list, tuple, or 1D ndarray"):
+        ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=range(3))
+
+    with pytest.raises(TypeError, match="must be a list, tuple, or 1D ndarray"):
+        ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=(x for x in [1.0, 2.0]))
+
+    with pytest.raises(TypeError, match="must be a list, tuple, or 1D ndarray"):
+        ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=array.array("d", [1.0, 2.0]))
+
+    with pytest.raises(TypeError, match="must be a list, tuple, or 1D ndarray"):
+        ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=memoryview(bytes(8)))
+
+    class ExplosiveArrayProvider:
+        def __array__(self):
+            raise AssertionError("__array__ must not be called")
+
+    class ExplosiveIterable:
+        def __iter__(self):
+            raise AssertionError("__iter__ must not be called")
+
+    with pytest.raises(TypeError, match="must be a list, tuple, or 1D ndarray"):
+        ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=ExplosiveArrayProvider())
+
+    with pytest.raises(TypeError, match="must be a list, tuple, or 1D ndarray"):
+        ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=ExplosiveIterable())
+
+
 def test_explicit_none_rejection_for_synthetic_sources():
     """Verify synthetic sources reject explicit None for length and amplitude with TypeError."""
     with pytest.raises(TypeError, match="length must be int"):
@@ -96,12 +137,6 @@ def test_deterministic_relevance_and_validation_order():
 
         def __iter__(self):
             raise RuntimeError("Should not be iterated!")
-
-    # Corrupted config fails defensive re-validation before allocation
-    corrupted_cfg = ImpulseSourceConfig()
-    object.__setattr__(corrupted_cfg, "source_type", "invalid_source")
-    with pytest.raises(ValueError, match="Unsupported source_type"):
-        build_impulse(corrupted_cfg)
 
     # single_tap: decay_ratio is checked before values
     with pytest.raises(ValueError, match="Field 'decay_ratio' is irrelevant"):
@@ -175,6 +210,108 @@ def test_common_field_validations():
 
     with pytest.raises(ValueError, match="impulse_zero_index must be >= 0"):
         ImpulseSourceConfig(impulse_zero_index=-1)
+
+
+def test_corrupted_config_build_time_rejection_matrix(monkeypatch):
+    """Verify build_impulse rejects corrupted frozen configs without repair and without calling _build_values."""
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("_build_values must not be called for corrupted config!")
+
+    monkeypatch.setattr(impulse_source, "_build_values", fail_if_called)
+
+    # Common field corruptions
+    cfg_dt_int = ImpulseSourceConfig()
+    object.__setattr__(cfg_dt_int, "sample_interval", 2)
+    with pytest.raises(TypeError, match="sample_interval must be float"):
+        build_impulse(cfg_dt_int)
+    assert cfg_dt_int.sample_interval == 2
+    assert type(cfg_dt_int.sample_interval) is int
+
+    cfg_dt_np = ImpulseSourceConfig()
+    object.__setattr__(cfg_dt_np, "sample_interval", np.float64(1.0))
+    with pytest.raises(TypeError, match="sample_interval must be float"):
+        build_impulse(cfg_dt_np)
+
+    cfg_z_np = ImpulseSourceConfig()
+    object.__setattr__(cfg_z_np, "impulse_zero_index", np.int64(0))
+    with pytest.raises(TypeError, match="impulse_zero_index must be int"):
+        build_impulse(cfg_z_np)
+
+    cfg_z_out = ImpulseSourceConfig()
+    object.__setattr__(cfg_z_out, "impulse_zero_index", 5)
+    with pytest.raises(ValueError, match="impulse_zero_index"):
+        build_impulse(cfg_z_out)
+
+    # single_tap corrupted fields
+    cfg_st_len = ImpulseSourceConfig()
+    object.__setattr__(cfg_st_len, "length", np.int64(1))
+    with pytest.raises(TypeError, match="length must be int"):
+        build_impulse(cfg_st_len)
+
+    cfg_st_amp_int = ImpulseSourceConfig()
+    object.__setattr__(cfg_st_amp_int, "amplitude", 2)
+    with pytest.raises(TypeError, match="amplitude must be float"):
+        build_impulse(cfg_st_amp_int)
+
+    cfg_st_amp_np = ImpulseSourceConfig()
+    object.__setattr__(cfg_st_amp_np, "amplitude", np.float64(1.0))
+    with pytest.raises(TypeError, match="amplitude must be float"):
+        build_impulse(cfg_st_amp_np)
+
+    cfg_st_decay = ImpulseSourceConfig()
+    object.__setattr__(cfg_st_decay, "decay_ratio", 0.5)
+    with pytest.raises(ValueError, match="Field 'decay_ratio' is irrelevant"):
+        build_impulse(cfg_st_decay)
+
+    cfg_st_val = ImpulseSourceConfig()
+    object.__setattr__(cfg_st_val, "values", (1.0,))
+    with pytest.raises(ValueError, match="Field 'values' is irrelevant"):
+        build_impulse(cfg_st_val)
+
+    # exponential_postcursor corrupted fields
+    cfg_exp = ImpulseSourceConfig(source_type="exponential_postcursor", decay_ratio=0.5)
+    cfg_exp_amp_int = ImpulseSourceConfig(source_type="exponential_postcursor", decay_ratio=0.5)
+    object.__setattr__(cfg_exp_amp_int, "amplitude", 1)
+    with pytest.raises(TypeError, match="amplitude must be float"):
+        build_impulse(cfg_exp_amp_int)
+
+    cfg_exp_decay_int = ImpulseSourceConfig(source_type="exponential_postcursor", decay_ratio=0.5)
+    object.__setattr__(cfg_exp_decay_int, "decay_ratio", 0)
+    with pytest.raises(TypeError, match="decay_ratio must be float"):
+        build_impulse(cfg_exp_decay_int)
+
+    cfg_exp_decay_np = ImpulseSourceConfig(source_type="exponential_postcursor", decay_ratio=0.5)
+    object.__setattr__(cfg_exp_decay_np, "decay_ratio", np.float64(0.5))
+    with pytest.raises(TypeError, match="decay_ratio must be float"):
+        build_impulse(cfg_exp_decay_np)
+
+    cfg_exp_val = ImpulseSourceConfig(source_type="exponential_postcursor", decay_ratio=0.5)
+    object.__setattr__(cfg_exp_val, "values", (1.0,))
+    with pytest.raises(ValueError, match="Field 'values' is irrelevant"):
+        build_impulse(cfg_exp_val)
+
+    # user_defined corrupted fields
+    cfg_u = ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=[1.0, 2.0])
+
+    cfg_u_list = ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=[1.0, 2.0])
+    object.__setattr__(cfg_u_list, "values", [1.0, 2.0])
+    with pytest.raises(TypeError, match="values must be tuple"):
+        build_impulse(cfg_u_list)
+
+    cfg_u_arr = ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=[1.0, 2.0])
+    object.__setattr__(cfg_u_arr, "values", np.array([1.0, 2.0]))
+    with pytest.raises(TypeError, match="values must be tuple"):
+        build_impulse(cfg_u_arr)
+
+    cfg_u_np_elem = ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=[1.0, 2.0])
+    object.__setattr__(cfg_u_np_elem, "values", (np.float64(1.0), np.float64(2.0)))
+    with pytest.raises(TypeError, match="element must be float"):
+        build_impulse(cfg_u_np_elem)
+
+    cfg_u_len = ImpulseSourceConfig(source_type="user_defined", length=None, amplitude=None, decay_ratio=None, values=[1.0, 2.0])
+    object.__setattr__(cfg_u_len, "length", 2)
+    with pytest.raises(ValueError, match="Field 'length' is irrelevant"):
+        build_impulse(cfg_u_len)
 
 
 def test_single_tap_golden_cases_boundaries_and_amplitude():
