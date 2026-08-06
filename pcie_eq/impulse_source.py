@@ -34,14 +34,28 @@ CANONICAL_KEYS = [
 ]
 
 
+def _canonicalize_finite_float(value: object, field_name: str) -> float:
+    if type(value) not in (int, float):
+        raise TypeError(f"{field_name} must be int or float, got {type(value).__name__}")
+    try:
+        resolved = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{field_name} must remain finite after float conversion") from exc
+
+    if not math.isfinite(resolved):
+        raise ValueError(f"{field_name} must be finite, got {value}")
+
+    return resolved
+
+
 @dataclass(frozen=True)
 class ImpulseSourceConfig:
     source_type: str = "single_tap"
     sample_interval: float = 1.0
     impulse_zero_index: int = 0
     normalization: str = "none"
-    length: int | None = None
-    amplitude: float | None = None
+    length: int | None = 1
+    amplitude: float | None = 1.0
     decay_ratio: float | None = None
     values: tuple[float, ...] | None = None
     schema_version: str = IMPULSE_SOURCE_CONTRACT_ID
@@ -60,12 +74,8 @@ class ImpulseSourceConfig:
             raise ValueError(f"Unsupported source_type '{self.source_type}'")
 
         # 3. sample_interval
-        if type(self.sample_interval) not in (int, float):
-            raise TypeError(f"sample_interval must be int or float, got {type(self.sample_interval).__name__}")
-        flt_sample_interval = float(self.sample_interval)
-        if math.isnan(flt_sample_interval) or math.isinf(flt_sample_interval):
-            raise ValueError(f"sample_interval must be finite, got {self.sample_interval}")
-        if flt_sample_interval <= 0:
+        flt_sample_interval = _canonicalize_finite_float(self.sample_interval, "sample_interval")
+        if flt_sample_interval <= 0.0:
             raise ValueError(f"sample_interval must be > 0, got {self.sample_interval}")
         object.__setattr__(self, "sample_interval", flt_sample_interval)
 
@@ -88,22 +98,16 @@ class ImpulseSourceConfig:
             if self.values is not None:
                 raise ValueError("Field 'values' is irrelevant for source_type 'single_tap'")
 
-            # Default length to 1 if None
             if self.length is None:
-                object.__setattr__(self, "length", 1)
+                raise TypeError("length must be int, got NoneType")
             if type(self.length) is not int:
                 raise TypeError(f"length must be int, got {type(self.length).__name__}")
             if self.length < 1:
                 raise ValueError(f"length must be >= 1, got {self.length}")
 
-            # Default amplitude to 1.0 if None
             if self.amplitude is None:
-                object.__setattr__(self, "amplitude", 1.0)
-            if type(self.amplitude) not in (int, float):
-                raise TypeError(f"amplitude must be int or float, got {type(self.amplitude).__name__}")
-            flt_amp = float(self.amplitude)
-            if math.isnan(flt_amp) or math.isinf(flt_amp):
-                raise ValueError(f"amplitude must be finite, got {self.amplitude}")
+                raise TypeError("amplitude must be int or float, got NoneType")
+            flt_amp = _canonicalize_finite_float(self.amplitude, "amplitude")
             object.__setattr__(self, "amplitude", flt_amp)
 
             resolved_len = self.length
@@ -112,31 +116,21 @@ class ImpulseSourceConfig:
             if self.values is not None:
                 raise ValueError("Field 'values' is irrelevant for source_type 'exponential_postcursor'")
 
-            # Default length to 1 if None
             if self.length is None:
-                object.__setattr__(self, "length", 1)
+                raise TypeError("length must be int, got NoneType")
             if type(self.length) is not int:
                 raise TypeError(f"length must be int, got {type(self.length).__name__}")
             if self.length < 1:
                 raise ValueError(f"length must be >= 1, got {self.length}")
 
-            # Default amplitude to 1.0 if None
             if self.amplitude is None:
-                object.__setattr__(self, "amplitude", 1.0)
-            if type(self.amplitude) not in (int, float):
-                raise TypeError(f"amplitude must be int or float, got {type(self.amplitude).__name__}")
-            flt_amp = float(self.amplitude)
-            if math.isnan(flt_amp) or math.isinf(flt_amp):
-                raise ValueError(f"amplitude must be finite, got {self.amplitude}")
+                raise TypeError("amplitude must be int or float, got NoneType")
+            flt_amp = _canonicalize_finite_float(self.amplitude, "amplitude")
             object.__setattr__(self, "amplitude", flt_amp)
 
             if self.decay_ratio is None:
                 raise ValueError("Field 'decay_ratio' is required for source_type 'exponential_postcursor'")
-            if type(self.decay_ratio) not in (int, float):
-                raise TypeError(f"decay_ratio must be int or float, got {type(self.decay_ratio).__name__}")
-            flt_decay = float(self.decay_ratio)
-            if math.isnan(flt_decay) or math.isinf(flt_decay):
-                raise ValueError(f"decay_ratio must be finite, got {self.decay_ratio}")
+            flt_decay = _canonicalize_finite_float(self.decay_ratio, "decay_ratio")
             if not (0.0 <= flt_decay < 1.0):
                 raise ValueError(f"decay_ratio must be in range [0.0, 1.0), got {self.decay_ratio}")
             object.__setattr__(self, "decay_ratio", flt_decay)
@@ -154,17 +148,14 @@ class ImpulseSourceConfig:
             if self.values is None:
                 raise ValueError("Field 'values' is required for source_type 'user_defined'")
 
-            # Canonicalize values to tuple[float, ...]
-            if not isinstance(self.values, (list, tuple, np.ndarray)):
-                raise TypeError(f"user_defined values must be list, tuple, or 1D ndarray, got {type(self.values).__name__}")
-
+            # Dimensionality and type validation
             try:
                 arr = np.asarray(self.values)
             except Exception as e:
                 raise TypeError(f"Failed to convert user_defined values to ndarray: {e}") from e
 
             if arr.ndim != 1:
-                raise ValueError(f"user_defined values must be 1D, got shape {arr.shape}")
+                raise ValueError(f"user_defined values must be 1D, got ndim={arr.ndim}")
             if arr.dtype.kind not in {"b", "i", "u", "f"}:
                 raise TypeError(f"user_defined values dtype must be real numeric (bool, int, uint, float), got {arr.dtype}")
             if arr.size == 0:
@@ -226,9 +217,6 @@ class ImpulseSourceConfig:
         if schema_version != IMPULSE_SOURCE_CONTRACT_ID:
             raise ValueError(f"Unknown schema_version '{schema_version}', expected '{IMPULSE_SOURCE_CONTRACT_ID}'")
 
-        raw_values = data["values"]
-        values_param = tuple(raw_values) if raw_values is not None else None
-
         return cls(
             schema_version=schema_version,
             source_type=data["source_type"],
@@ -238,7 +226,7 @@ class ImpulseSourceConfig:
             length=data["length"],
             amplitude=data["amplitude"],
             decay_ratio=data["decay_ratio"],
-            values=values_param,
+            values=data["values"],
         )
 
 
@@ -247,6 +235,23 @@ class ImpulseSourceResult:
     values: np.ndarray
     resolved_config: ImpulseSourceConfig
     model_level: str
+
+
+def _build_values(config: ImpulseSourceConfig, resolved_length: int) -> np.ndarray:
+    if config.source_type == "single_tap":
+        values = np.zeros(resolved_length, dtype=np.float64)
+        values[config.impulse_zero_index] = float(config.amplitude)
+        return values
+    elif config.source_type == "exponential_postcursor":
+        values = np.zeros(resolved_length, dtype=np.float64)
+        z = config.impulse_zero_index
+        amp = float(config.amplitude)
+        decay = float(config.decay_ratio)
+        for n in range(z, resolved_length):
+            values[n] = amp * (decay ** (n - z))
+        return values
+    elif config.source_type == "user_defined":
+        return np.array(config.values, dtype=np.float64)
 
 
 def build_impulse(config: ImpulseSourceConfig) -> ImpulseSourceResult:
@@ -276,23 +281,10 @@ def build_impulse(config: ImpulseSourceConfig) -> ImpulseSourceResult:
         values=config.values,
     )
 
-    # 5. Allocate & compute float64 output
-    if config.source_type == "single_tap":
-        values = np.zeros(resolved_len, dtype=np.float64)
-        values[config.impulse_zero_index] = float(config.amplitude)
+    # 5. Build values via private helper
+    values = _build_values(config, resolved_len)
 
-    elif config.source_type == "exponential_postcursor":
-        values = np.zeros(resolved_len, dtype=np.float64)
-        z = config.impulse_zero_index
-        amp = float(config.amplitude)
-        decay = float(config.decay_ratio)
-        for n in range(z, resolved_len):
-            values[n] = amp * (decay ** (n - z))
-
-    elif config.source_type == "user_defined":
-        values = np.array(config.values, dtype=np.float64)
-
-    # 6. Strict final validation
+    # 6. Strict final validation without repair
     if type(values) is not np.ndarray:
         raise RuntimeError(f"Generated output is not exact np.ndarray: {type(values)}")
     if values.ndim != 1 or values.shape != (resolved_len,):
