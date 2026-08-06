@@ -186,10 +186,20 @@ def convolve_impulse(
         raise RuntimeError("Convolution helper output is not C-contiguous")
     if not np.all(np.isfinite(full_result)):
         raise RuntimeError("Convolution helper output contains non-finite values")
-    if full_result is wave_work or full_result is impulse_work or full_result is wave_arr or full_result is impulse_arr:
+    if (
+        full_result is wave_work
+        or full_result is impulse_work
+        or full_result is wave_arr
+        or full_result is impulse_arr
+    ):
         raise RuntimeError("Convolution helper output aliases input object")
-    if np.shares_memory(full_result, wave_arr) or np.shares_memory(full_result, impulse_arr):
-        raise RuntimeError("Convolution helper output shares memory with input")
+    if (
+        np.shares_memory(full_result, wave_work)
+        or np.shares_memory(full_result, impulse_work)
+        or np.shares_memory(full_result, wave_arr)
+        or np.shares_memory(full_result, impulse_arr)
+    ):
+        raise RuntimeError("Convolution helper output shares memory with working input")
 
     # 11. Slicing & Alignment according to exact project mode semantics
     if config.mode == "full":
