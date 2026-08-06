@@ -154,7 +154,7 @@ class ImpulseSourceConfig:
                 arr = np.asarray(raw_values)
             elif type(raw_values) in (list, tuple):
                 arr = np.asarray(raw_values)
-            elif type(raw_values) in (bool, int, float, complex):
+            elif type(raw_values) in (bool, int, float, complex) or isinstance(raw_values, np.generic):
                 arr = np.asarray(raw_values)
             else:
                 raise TypeError("user_defined values must be a list, tuple, or 1D ndarray")
@@ -395,6 +395,8 @@ def build_impulse(config: ImpulseSourceConfig) -> ImpulseSourceResult:
         raise RuntimeError(f"Generated output dtype mismatch: got {values.dtype}, expected float64")
     if not values.flags.c_contiguous:
         raise RuntimeError("Generated output is not C-contiguous")
+    if not values.flags.owndata:
+        raise RuntimeError("Generated output does not own independent storage")
     if not np.all(np.isfinite(values)):
         raise RuntimeError("Generated output contains non-finite values")
 
