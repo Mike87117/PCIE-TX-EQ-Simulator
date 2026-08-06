@@ -104,7 +104,7 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
     if type(config) is not ChannelConfig:
         raise TypeError(f"config must be exactly ChannelConfig, got {type(config).__name__}")
 
-    # Defensive re-validation of original config
+    # Defensive re-validation of original config before wave materialization or processing
     config._validate()
 
     # Materialize and validate wave input
@@ -144,14 +144,14 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
     elif config.mode == "legacy_lowpass":
         values = simple_channel(wave, alpha=resolved_alpha)
 
-    # Output verification against frozen contract
-    if not isinstance(values, np.ndarray):
-        raise RuntimeError(f"Channel output is not np.ndarray: {type(values)}")
+    # Output verification against frozen contract (exact type check, no subclass)
+    if type(values) is not np.ndarray:
+        raise RuntimeError(f"Channel output is not exact np.ndarray: {type(values)}")
     if values.ndim != 1 or values.shape != (len(arr),):
         raise RuntimeError(f"Channel output shape mismatch: got {values.shape}, expected ({len(arr)},)")
     if not values.flags.c_contiguous:
         raise RuntimeError("Channel output is not C-contiguous")
-    if arr.size > 0 and np.shares_memory(values, arr):
+    if values is arr or np.shares_memory(values, arr):
         raise RuntimeError("Channel output memory aliases caller input")
     if values.size > 0 and not np.all(np.isfinite(values)):
         raise RuntimeError("Channel output contains non-finite values")
