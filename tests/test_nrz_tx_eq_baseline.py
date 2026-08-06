@@ -195,3 +195,25 @@ def test_nrz_tx_eq_level_pattern_vectors(pattern_name, symbols, expected_levels)
     assert len(y_eq) == len(symbols)
     np.testing.assert_array_equal(symbols, symbols_copy)
     np.testing.assert_allclose(y_eq, expected_levels, rtol=1e-6, atol=1e-6)
+
+
+def test_nrz_tx_fir_empty_input():
+    """
+    Verify tx_fir returns an empty float array for empty input across all normalize_modes.
+    """
+    for mode in ["none", "steady", "peak"]:
+        y, c0 = tx_fir(np.array([], dtype=float), cm1=-0.1, cp1=-0.2, normalize_mode=mode)
+        assert isinstance(y, np.ndarray)
+        assert y.shape == (0,)
+        assert y.dtype == np.float64
+        assert c0 == pytest.approx(1 - 0.1 - 0.2, abs=1e-12)
+
+
+
+def test_nrz_tx_eq_levels_empty_input():
+    """Verify tx_eq_levels already tolerates empty input and returns an empty float array."""
+    y = tx_eq_levels(np.array([], dtype=float), preshoot_db=1.5, deemph_db=-3.5)
+
+    assert isinstance(y, np.ndarray)
+    assert y.shape == (0,)
+    assert y.dtype == np.float64

@@ -154,3 +154,96 @@ def test_gui_simulator_instantiation_and_refresh():
 
     win.full_refresh()
     win.pam4_full_refresh()
+
+
+def test_run_simulation_with_default_empty_configs():
+    """
+    Verify run_simulation tolerates the dataclass default empty symbol arrays
+    and returns structurally valid empty result objects matching all contract requirements.
+    """
+    # NRZ default empty config
+    nrz_cfg = NrzSimulationConfig()
+    nrz_res = run_simulation(nrz_cfg)
+    assert isinstance(nrz_res, NrzSimulationResult)
+
+    nrz_array_fields = [
+        "tx_symbols",
+        "tx_wave",
+        "ch_wave",
+        "ctle_wave",
+        "dfe_input_samples",
+        "dfe_corrected_samples",
+        "dfe_decisions",
+    ]
+    for name in nrz_array_fields:
+        arr = getattr(nrz_res, name)
+        assert isinstance(arr, np.ndarray), name
+        assert arr.shape == (0,), name
+        assert arr.dtype == np.float64, name
+
+    expected_nrz_metric_keys = {
+        "eye_height",
+        "margin_5pct",
+        "error_count",
+        "eye_max",
+        "eye_min",
+        "center_spread",
+    }
+    for name in ("channel_eye_metrics", "ctle_eye_metrics", "dfe_eye_metrics"):
+        metrics = getattr(nrz_res, name)
+        assert isinstance(metrics, dict), name
+        assert set(metrics.keys()) == expected_nrz_metric_keys, name
+        assert metrics["eye_height"] == 0.0, name
+        assert metrics["margin_5pct"] == 0.0, name
+        assert metrics["error_count"] == 0, name
+        assert isinstance(metrics["error_count"], int), name
+        assert metrics["eye_max"] == 0.0, name
+        assert metrics["eye_min"] == 0.0, name
+        assert metrics["center_spread"] == 0.0, name
+
+    # PAM4 default empty config
+    pam4_cfg = Pam4SimulationConfig()
+    pam4_res = run_simulation(pam4_cfg)
+    assert isinstance(pam4_res, Pam4SimulationResult)
+
+    pam4_array_fields = ["tx_symbols", "tx_wave", "ch_wave"]
+    for name in pam4_array_fields:
+        arr = getattr(pam4_res, name)
+        assert isinstance(arr, np.ndarray), name
+        assert arr.shape == (0,), name
+        assert arr.dtype == np.float64, name
+
+    assert pam4_res.t_center_phase == pam4_cfg.spb // 2
+    assert pam4_res.t_center_phase == 16
+    assert pam4_res.t_center_score == 0.0
+
+    expected_pam4_metric_keys = {
+        "upper_eye",
+        "middle_eye",
+        "lower_eye",
+        "minimum_eye",
+        "center_spread",
+    }
+    assert set(pam4_res.pam4_eye_metrics.keys()) == expected_pam4_metric_keys
+    for k, v in pam4_res.pam4_eye_metrics.items():
+        assert v == 0.0, k
+
+
+def test_run_simulation_empty_does_not_disturb_global_rng():
+    """Verify the empty-input path stays deterministic and preserves full legacy NumPy global RNG state."""
+    before = np.random.get_state()
+    try:
+        run_simulation(NrzSimulationConfig())
+        run_simulation(Pam4SimulationConfig())
+
+        after = np.random.get_state()
+        # Generator name
+        assert before[0] == after[0]
+        # State array
+        np.testing.assert_array_equal(before[1], after[1])
+        # Position, has_gauss, cached gaussian
+        assert before[2] == after[2]
+        assert before[3] == after[3]
+        assert before[4] == after[4]
+    finally:
+        np.random.set_state(before)

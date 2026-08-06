@@ -104,6 +104,10 @@ def db_to_taps(pre_db, de_db):
 
 def tx_fir(symbols_in, cm1, cp1, normalize_mode="none"):
     c0 = 1 - abs(cm1) - abs(cp1)
+    symbols_in = np.asarray(symbols_in)
+    if symbols_in.size == 0:
+        # np.pad(mode="edge") cannot extend an empty axis.
+        return np.array([], dtype=float), c0
     padded = np.pad(symbols_in, (1, 1), mode="edge")
     y = []
     for i in range(1, len(padded) - 1):
@@ -189,6 +193,10 @@ def calc_gen6_levels(cm2, cm1, cp1):
 def gen6_pam4_fir(symbols_in, cm2, cm1, cp1):
     cm2, cm1, cp1 = constrain_gen6_taps(cm2, cm1, cp1)
     c0 = 1.0 - abs(cm2) - abs(cm1) - abs(cp1)
+    symbols_in = np.asarray(symbols_in)
+    if symbols_in.size == 0:
+        # np.pad(mode="edge") cannot extend an empty axis.
+        return np.array([], dtype=float), c0
     # Simulator convention:
     # C-2 / C-1 are precursor taps.
     # C+1 is the post-cursor tap.
