@@ -5,7 +5,6 @@ Locks in existing pre-refactor behavior of:
 - simple_channel(wave, alpha=0.08)
 """
 
-import pytest
 import numpy as np
 from pcie_eq.channel import simple_channel
 
@@ -96,13 +95,71 @@ def test_channel_negative_alpha_golden():
 
 def test_channel_empty_array_behavior():
     """
-    Document current behavior on empty array input.
-    Current implementation accesses out[0] = wave[0] directly, which raises IndexError
-    when input size is 0.
+    Verify empty input returns an empty float array instead of raising.
+
+    Baseline change: this previously raised IndexError from out[0] = wave[0].
+    The pipeline dataclasses default to empty symbol arrays, so the crash was
+    reachable from run_simulation(NrzSimulationConfig()).
     """
     empty_wave = np.array([], dtype=float)
-    with pytest.raises(IndexError):
-        simple_channel(empty_wave, alpha=0.08)
+    out = simple_channel(empty_wave, alpha=0.08)
+
+    assert isinstance(out, np.ndarray)
+    assert out.shape == (0,)
+    assert out.dtype == np.float64
+
+
+def test_channel_integer_input_is_not_truncated():
+    """
+    Verify integer input is evaluated in floating point.
+
+    Previously out = np.zeros_like(wave) inherited the integer dtype, so
+    alpha * (wave[i] - out[i-1]) was truncated toward zero on every sample and
+    a 0/1 bit stream collapsed to all zeros.
+
+    wave = [0, 1, 1, 0], alpha = 0.5:
+    i=0: out[0] = 0.0
+    i=1: out[1] = 0.0 + 0.5 * (1 - 0.0)  = 0.5
+    i=2: out[2] = 0.5 + 0.5 * (1 - 0.5)  = 0.75
+    i=3: out[3] = 0.75 + 0.5 * (0 - 0.75) = 0.375
+    """
+    wave = np.array([0, 1, 1, 0], dtype=int)
+    wave_copy = wave.copy()
+
+    out = simple_channel(wave, alpha=0.5)
+
+    np.testing.assert_array_equal(wave, wave_copy)
+    assert np.issubdtype(out.dtype, np.floating)
+
+    expected = np.array([0.0, 0.5, 0.75, 0.375], dtype=float)
+    np.testing.assert_allclose(out, expected, rtol=1e-7, atol=1e-7)
+    assert not np.all(out == 0), "integer input must not collapse to all zeros"
+
+
+def test_channel_float_dtype_is_preserved():
+    """
+    Verify existing floating input keeps its own dtype.
+
+    Only non-floating input is promoted, so float64 pipeline waveforms are
+    bit-exact against the previous implementation.
+    """
+    wave64 = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    assert simple_channel(wave64, alpha=0.5).dtype == np.float64
+
+    wave32 = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    assert simple_channel(wave32, alpha=0.5).dtype == np.float32
+
+
+def test_channel_accepts_sequence_input():
+    """
+    Verify a plain Python sequence is accepted and evaluated in floating point.
+    """
+    out = simple_channel([0, 1, 1, 0], alpha=0.5)
+
+    assert isinstance(out, np.ndarray)
+    np.testing.assert_allclose(
+        out, np.array([0.0, 0.5, 0.75, 0.375]), rtol=1e-7, atol=1e-7
+    )
 
 
 def test_channel_edge_case_alphas():

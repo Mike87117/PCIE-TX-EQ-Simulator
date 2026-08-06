@@ -160,3 +160,18 @@ def test_calc_gen6_levels_golden():
     assert vd == pytest.approx(1.000, abs=1e-6)
     assert pre1_db == pytest.approx(20 * np.log10(1.000 / 0.834), abs=1e-4)
     assert de_db == pytest.approx(0.0, abs=1e-6)
+
+
+def test_pam4_gen6_fir_empty_input():
+    """
+    Verify gen6_pam4_fir returns an empty float array for empty input instead of raising.
+
+    np.pad(mode="edge") cannot extend an empty axis, so this previously raised
+    ValueError. c0 is still derived from the constrained taps and returned unchanged.
+    """
+    y, c0 = gen6_pam4_fir(np.array([], dtype=float), cm2=0.083, cm1=-0.250, cp1=0.0)
+
+    assert isinstance(y, np.ndarray)
+    assert y.shape == (0,)
+    assert y.dtype == np.float64
+    assert c0 == pytest.approx(1.0 - 0.083 - 0.250 - 0.0, abs=1e-12)
