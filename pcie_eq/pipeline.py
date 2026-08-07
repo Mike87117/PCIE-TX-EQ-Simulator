@@ -8,7 +8,7 @@ from pcie_eq.models import (
     Pam4SimulationResult,
 )
 from pcie_eq.tx_eq import tx_eq_levels, gen6_pam4_fir
-from pcie_eq.channel import simple_channel
+from pcie_eq.channel_config import ChannelConfig, apply_channel
 from pcie_eq.rx_eq import run_rx_pipeline
 from pcie_eq.metrics import (
     calculate_nrz_eye_metrics,
@@ -29,7 +29,8 @@ def run_nrz_simulation(config: NrzSimulationConfig) -> NrzSimulationResult:
         config.symbols, config.pre_db, config.de_db
     )
     tx_wave = np.repeat(tx_symbols, config.spb)
-    ch_wave = simple_channel(tx_wave, alpha=config.channel_alpha)
+    channel_config = ChannelConfig(mode="legacy_lowpass", alpha=config.channel_alpha)
+    ch_wave = apply_channel(tx_wave, channel_config).values
 
     rx_results = run_rx_pipeline(
         ch_wave,
@@ -78,7 +79,8 @@ def run_pam4_simulation(config: Pam4SimulationConfig) -> Pam4SimulationResult:
         config.cp1,
     )
     tx_wave = np.repeat(tx_symbols, config.spb)
-    ch_wave = simple_channel(tx_wave, alpha=config.channel_alpha)
+    channel_config = ChannelConfig(mode="legacy_lowpass", alpha=config.channel_alpha)
+    ch_wave = apply_channel(tx_wave, channel_config).values
 
     t_center_phase, t_center_score, pam4_eye_metrics = calculate_pam4_eye_metrics(
         ch_wave, config.symbols, old_phase=config.old_phase, spb=config.spb

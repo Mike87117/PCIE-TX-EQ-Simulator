@@ -4,7 +4,8 @@ Module Boundary Tests for pcie_eq.pipeline.
 Verifies:
 1. Independent importability of pcie_eq.pipeline without GUI libraries or main.py.
 2. AST inspection confirming no forbidden imports (PyQt5, PyQt6, PySide, pyqtgraph, main, ui).
-3. Presence of all 3 pipeline APIs in pcie_eq.pipeline and __all__.
+3. Exact presence and order of the 3 public pipeline APIs in __all__.
+4. Channel execution depends on pcie_eq.channel_config rather than direct simple_channel imports/calls.
 """
 
 import ast
@@ -23,7 +24,7 @@ def test_pipeline_independent_import():
 
 def test_pipeline_api_completeness():
     """
-    Verify presence of all 3 pipeline functions in pcie_eq.pipeline and __all__.
+    Verify exact public pipeline API surface and order.
     """
     import pcie_eq.pipeline as pipeline
 
@@ -33,9 +34,9 @@ def test_pipeline_api_completeness():
         "run_simulation",
     ]
 
+    assert pipeline.__all__ == expected_apis
     for api_name in expected_apis:
         assert hasattr(pipeline, api_name), f"pcie_eq.pipeline missing attribute '{api_name}'"
-        assert api_name in pipeline.__all__, f"pcie_eq.pipeline.__all__ missing '{api_name}'"
 
 
 def test_pipeline_no_forbidden_imports():
@@ -117,3 +118,40 @@ def test_pipeline_only_allowed_imports():
                 disallowed.add(mod_name)
 
     assert not disallowed, f"pcie_eq.pipeline contains unapproved non-stdlib imports: {disallowed}"
+
+
+def test_pipeline_channel_uses_channel_config_boundary_only():
+    """Pipeline must not bypass ChannelConfig by importing or calling simple_channel directly."""
+    import pcie_eq.pipeline as pipeline
+
+    source_path = inspect.getfile(pipeline)
+    with open(source_path, "r", encoding="utf-8") as f:
+        source_text = f.read()
+
+    tree = ast.parse(source_text, filename=source_path)
+
+    imported_modules = set()
+    imported_names = set()
+    called_names = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_modules.add(alias.name)
+                imported_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported_modules.add(node.module)
+            for alias in node.names:
+                imported_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            called_names.add(node.func.id)
+
+    assert "pcie_eq.channel" not in imported_modules
+    assert "simple_channel" not in imported_names
+    assert "simple_channel" not in called_names
+    assert "pcie_eq.channel_config" in imported_modules
+    assert "ChannelConfig" in imported_names
+    assert "apply_channel" in imported_names
+    assert "ChannelConfig" in called_names
+    assert "apply_channel" in called_names
