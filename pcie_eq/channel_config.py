@@ -11,18 +11,49 @@ import math
 import numpy as np
 
 from pcie_eq.channel import simple_channel
+from pcie_eq.impulse_convolution import (
+    ImpulseConvolutionConfig,
+    ImpulseConvolutionResult,
+    convolve_impulse,
+)
+from pcie_eq.impulse_source import (
+    ImpulseSourceConfig,
+    ImpulseSourceResult,
+    build_impulse,
+)
 
-CHANNEL_CONFIG_CONTRACT_ID = "pcie_eq-channel-config-v1"
+CHANNEL_CONFIG_CONTRACT_ID = "pcie_eq-channel-config-v2"
+LEGACY_CHANNEL_CONFIG_CONTRACT_ID = "pcie_eq-channel-config-v1"
 
 __all__ = [
     "CHANNEL_CONFIG_CONTRACT_ID",
+    "LEGACY_CHANNEL_CONFIG_CONTRACT_ID",
     "ChannelConfig",
     "ChannelResult",
     "apply_channel",
 ]
 
-SUPPORTED_MODES = {"none", "legacy_lowpass"}
-CANONICAL_KEYS = ["schema_version", "mode", "alpha"]
+SUPPORTED_SCHEMAS = {CHANNEL_CONFIG_CONTRACT_ID, LEGACY_CHANNEL_CONFIG_CONTRACT_ID}
+V1_MODES = {"none", "legacy_lowpass"}
+V2_MODES = {"none", "legacy_lowpass", "impulse_response"}
+
+V1_CANONICAL_KEYS = ["schema_version", "mode", "alpha"]
+V2_CANONICAL_KEYS = ["schema_version", "mode", "alpha", "impulse_source"]
+
+
+def _reconstruct_impulse_source(source: ImpulseSourceConfig) -> ImpulseSourceConfig:
+    """Return a new exact ImpulseSourceConfig with identical canonical fields."""
+    return ImpulseSourceConfig(
+        schema_version=source.schema_version,
+        source_type=source.source_type,
+        sample_interval=source.sample_interval,
+        impulse_zero_index=source.impulse_zero_index,
+        normalization=source.normalization,
+        length=source.length,
+        amplitude=source.amplitude,
+        decay_ratio=source.decay_ratio,
+        values=source.values,
+    )
 
 
 @dataclass(frozen=True)
@@ -30,22 +61,42 @@ class ChannelConfig:
     mode: str
     schema_version: str = CHANNEL_CONFIG_CONTRACT_ID
     alpha: int | float | None = None
+    impulse_source: ImpulseSourceConfig | None = None
 
     def _validate(self) -> None:
+        # 1. schema_version
         if type(self.schema_version) is not str:
             raise TypeError(f"schema_version must be str, got {type(self.schema_version).__name__}")
-        if self.schema_version != CHANNEL_CONFIG_CONTRACT_ID:
-            raise ValueError(f"Unknown schema_version '{self.schema_version}', expected '{CHANNEL_CONFIG_CONTRACT_ID}'")
+        if self.schema_version not in SUPPORTED_SCHEMAS:
+            raise ValueError(
+                f"Unknown schema_version '{self.schema_version}', expected one of {sorted(SUPPORTED_SCHEMAS)}"
+            )
 
+        # 2. mode
         if type(self.mode) is not str:
             raise TypeError(f"mode must be str, got {type(self.mode).__name__}")
-        if self.mode not in SUPPORTED_MODES:
-            raise ValueError(f"Unsupported mode '{self.mode}'")
 
+        if self.schema_version == LEGACY_CHANNEL_CONFIG_CONTRACT_ID:
+            if self.mode not in V1_MODES:
+                raise ValueError(
+                    f"Unsupported mode '{self.mode}' for schema '{LEGACY_CHANNEL_CONFIG_CONTRACT_ID}'"
+                )
+        elif self.schema_version == CHANNEL_CONFIG_CONTRACT_ID:
+            if self.mode not in V2_MODES:
+                raise ValueError(
+                    f"Unsupported mode '{self.mode}' for schema '{CHANNEL_CONFIG_CONTRACT_ID}'"
+                )
+
+        # 3. Mode-specific field relevance & validation
         if self.mode == "none":
             if self.alpha is not None:
                 raise ValueError("Field 'alpha' is not applicable for mode 'none'")
+            if self.impulse_source is not None:
+                raise ValueError("Field 'impulse_source' is not applicable for mode 'none'")
+
         elif self.mode == "legacy_lowpass":
+            if self.impulse_source is not None:
+                raise ValueError("Field 'impulse_source' is not applicable for mode 'legacy_lowpass'")
             if self.alpha is not None:
                 if type(self.alpha) not in (int, float):
                     raise TypeError(f"alpha must be int, float, or None, got {type(self.alpha).__name__}")
@@ -53,14 +104,40 @@ class ChannelConfig:
                 if math.isnan(flt_alpha) or math.isinf(flt_alpha):
                     raise ValueError(f"alpha must be finite, got {self.alpha}")
 
+        elif self.mode == "impulse_response":
+            if self.alpha is not None:
+                raise ValueError("Field 'alpha' is not applicable for mode 'impulse_response'")
+            if self.impulse_source is None:
+                raise ValueError("Field 'impulse_source' is required for mode 'impulse_response'")
+            if type(self.impulse_source) is not ImpulseSourceConfig:
+                raise TypeError(
+                    f"impulse_source must be exactly ImpulseSourceConfig, got {type(self.impulse_source).__name__}"
+                )
+
+            # Defensively re-validate nested frozen source config via public API without repair.
+            _reconstruct_impulse_source(self.impulse_source)
+
+            # Integration v1 requires sample_interval == 1.0.
+            if self.impulse_source.sample_interval != 1.0:
+                raise ValueError(
+                    f"Integration v1 accepts only sample_interval == 1.0, got {self.impulse_source.sample_interval}"
+                )
+
     def __post_init__(self) -> None:
         self._validate()
 
     def to_dict(self) -> dict[str, object]:
+        if self.schema_version == LEGACY_CHANNEL_CONFIG_CONTRACT_ID:
+            return {
+                "schema_version": self.schema_version,
+                "mode": self.mode,
+                "alpha": self.alpha,
+            }
         return {
             "schema_version": self.schema_version,
             "mode": self.mode,
             "alpha": self.alpha,
+            "impulse_source": self.impulse_source.to_dict() if self.impulse_source is not None else None,
         }
 
     @classmethod
@@ -68,8 +145,23 @@ class ChannelConfig:
         if not isinstance(data, Mapping):
             raise TypeError(f"data must be a Mapping, got {type(data).__name__}")
 
+        if "schema_version" not in data:
+            raise ValueError("missing keys: ['schema_version']")
+
+        schema_version = data["schema_version"]
+        if type(schema_version) is not str:
+            raise TypeError(f"schema_version in dict must be str, got {type(schema_version).__name__}")
+        if schema_version not in SUPPORTED_SCHEMAS:
+            raise ValueError(
+                f"Unknown schema_version '{schema_version}', expected one of {sorted(SUPPORTED_SCHEMAS)}"
+            )
+
         data_keys = set(data.keys())
-        expected_keys = set(CANONICAL_KEYS)
+        expected_keys = (
+            set(V1_CANONICAL_KEYS)
+            if schema_version == LEGACY_CHANNEL_CONFIG_CONTRACT_ID
+            else set(V2_CANONICAL_KEYS)
+        )
         if data_keys != expected_keys:
             missing = expected_keys - data_keys
             extra = data_keys - expected_keys
@@ -80,16 +172,41 @@ class ChannelConfig:
                 msg_parts.append(f"extra keys: {sorted(extra)}")
             raise ValueError(f"Invalid dictionary keys ({', '.join(msg_parts)})")
 
-        schema_version = data["schema_version"]
-        if type(schema_version) is not str:
-            raise TypeError(f"schema_version in dict must be str, got {type(schema_version).__name__}")
-        if schema_version != CHANNEL_CONFIG_CONTRACT_ID:
-            raise ValueError(f"Unknown schema_version '{schema_version}', expected '{CHANNEL_CONFIG_CONTRACT_ID}'")
+        mode = data["mode"]
+        alpha = data["alpha"]
+
+        if schema_version == LEGACY_CHANNEL_CONFIG_CONTRACT_ID:
+            impulse_source = None
+        else:
+            raw_source = data["impulse_source"]
+
+            # Enforce mode relevance before touching unrelated nested source data.
+            if mode == "none":
+                if alpha is not None:
+                    raise ValueError("Field 'alpha' is not applicable for mode 'none'")
+                if raw_source is not None:
+                    raise ValueError("Field 'impulse_source' is not applicable for mode 'none'")
+                impulse_source = None
+            elif mode == "legacy_lowpass":
+                if raw_source is not None:
+                    raise ValueError("Field 'impulse_source' is not applicable for mode 'legacy_lowpass'")
+                impulse_source = None
+            elif mode == "impulse_response":
+                if alpha is not None:
+                    raise ValueError("Field 'alpha' is not applicable for mode 'impulse_response'")
+                if raw_source is None:
+                    raise ValueError("Field 'impulse_source' is required for mode 'impulse_response'")
+                impulse_source = ImpulseSourceConfig.from_dict(raw_source)
+            else:
+                # Unsupported/non-string mode is rejected by the ChannelConfig constructor
+                # without parsing unrelated nested source data.
+                impulse_source = None
 
         return cls(
             schema_version=schema_version,
-            mode=data["mode"],
-            alpha=data["alpha"],
+            mode=mode,
+            alpha=alpha,
+            impulse_source=impulse_source,
         )
 
 
@@ -101,13 +218,24 @@ class ChannelResult:
 
 
 def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
+    # 1. Require exact ChannelConfig type.
     if type(config) is not ChannelConfig:
         raise TypeError(f"config must be exactly ChannelConfig, got {type(config).__name__}")
 
-    # Defensive re-validation of original config before wave materialization or processing
+    # 2-5. Revalidate, then capture the canonical config/source snapshot before wave materialization.
     config._validate()
+    validated_schema = config.schema_version
+    validated_mode = config.mode
+    validated_alpha = config.alpha
+    defensive_source = None
+    if validated_mode == "impulse_response":
+        defensive_source = _reconstruct_impulse_source(config.impulse_source)
+        if defensive_source.sample_interval != 1.0:
+            raise ValueError(
+                f"Integration v1 accepts only sample_interval == 1.0, got {defensive_source.sample_interval}"
+            )
 
-    # Materialize and validate wave input
+    # 6. Materialize and validate wave input.
     try:
         arr = np.asarray(wave)
     except Exception as e:
@@ -122,29 +250,143 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
     if arr.size > 0 and not np.all(np.isfinite(arr)):
         raise ValueError("wave input elements must be finite")
 
-    # Default resolution and resolved_config creation
-    if config.mode == "none":
+    # 7-8. Mode dispatch uses only the validated pre-wave snapshot.
+    if validated_mode == "none":
         resolved_alpha = None
+        resolved_source = None
         model_level = "identity"
-    elif config.mode == "legacy_lowpass":
-        resolved_alpha = float(config.alpha) if config.alpha is not None else 0.08
-        model_level = "teaching_approximation"
-
-    resolved_config = ChannelConfig(
-        schema_version=config.schema_version,
-        mode=config.mode,
-        alpha=resolved_alpha,
-    )
-
-    # Computation / Delegation
-    if config.mode == "none":
         values = np.array(arr, copy=True)
         if not values.flags.c_contiguous:
             values = np.ascontiguousarray(values)
-    elif config.mode == "legacy_lowpass":
+
+    elif validated_mode == "legacy_lowpass":
+        resolved_alpha = float(validated_alpha) if validated_alpha is not None else 0.08
+        resolved_source = None
+        model_level = "teaching_approximation"
         values = simple_channel(wave, alpha=resolved_alpha)
 
-    # Output verification against frozen contract (exact type check, no subclass)
+    elif validated_mode == "impulse_response":
+        resolved_alpha = None
+        model_level = "project_owned_discrete_impulse_channel"
+
+        # Step 8: Call build_impulse exactly once with the pre-wave defensive source snapshot.
+        try:
+            source_result = build_impulse(defensive_source)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"build_impulse failed: {exc}") from exc
+
+        # Step 9: Validate exact ImpulseSourceResult child boundary.
+        if type(source_result) is not ImpulseSourceResult:
+            raise RuntimeError(f"source result is not exact ImpulseSourceResult: {type(source_result)}")
+        if type(source_result.resolved_config) is not ImpulseSourceConfig:
+            raise RuntimeError(
+                f"source resolved_config is not exact ImpulseSourceConfig: {type(source_result.resolved_config)}"
+            )
+
+        try:
+            _reconstruct_impulse_source(source_result.resolved_config)
+        except Exception as exc:
+            raise RuntimeError(f"source resolved_config semantics invalid: {exc}") from exc
+
+        if source_result.model_level != "project_owned_discrete_impulse_source":
+            raise RuntimeError(f"source model_level mismatch: got '{source_result.model_level}'")
+        if type(source_result.values) is not np.ndarray:
+            raise RuntimeError(f"source values is not exact np.ndarray: {type(source_result.values)}")
+        if source_result.values.dtype != np.float64:
+            raise RuntimeError(f"source values dtype mismatch: got {source_result.values.dtype}")
+        if source_result.values.ndim != 1:
+            raise RuntimeError(f"source values is not 1D: shape {source_result.values.shape}")
+        if not source_result.values.flags.c_contiguous:
+            raise RuntimeError("source values is not C-contiguous")
+        if not np.all(np.isfinite(source_result.values)):
+            raise RuntimeError("source values contains non-finite elements")
+        if source_result.resolved_config.sample_interval != 1.0:
+            raise RuntimeError(
+                f"source resolved sample_interval mismatch: {source_result.resolved_config.sample_interval}"
+            )
+
+        if source_result.resolved_config.source_type in ("single_tap", "exponential_postcursor"):
+            expected_src_len = source_result.resolved_config.length
+        elif source_result.resolved_config.source_type == "user_defined":
+            if source_result.resolved_config.values is None:
+                raise RuntimeError("user_defined source resolved_config values is None")
+            expected_src_len = len(source_result.resolved_config.values)
+        else:
+            raise RuntimeError(
+                f"Unsupported source_type in source resolved_config: '{source_result.resolved_config.source_type}'"
+            )
+
+        if source_result.values.shape != (expected_src_len,):
+            raise RuntimeError(
+                f"source values shape mismatch: got {source_result.values.shape}, expected ({expected_src_len},)"
+            )
+
+        # Step 13 ownership requirement: final nested source is a fresh exact config.
+        resolved_source = _reconstruct_impulse_source(source_result.resolved_config)
+
+        # Step 10: Derive convolution config.
+        conv_config = ImpulseConvolutionConfig(
+            mode="same",
+            impulse_zero_index=source_result.resolved_config.impulse_zero_index,
+        )
+
+        # Step 11: Call convolve_impulse exactly once.
+        try:
+            conv_result = convolve_impulse(wave, source_result.values, conv_config)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"convolve_impulse failed: {exc}") from exc
+
+        # Step 12: Validate exact ImpulseConvolutionResult child boundary.
+        if type(conv_result) is not ImpulseConvolutionResult:
+            raise RuntimeError(
+                f"convolution result is not exact ImpulseConvolutionResult: {type(conv_result)}"
+            )
+        if type(conv_result.resolved_config) is not ImpulseConvolutionConfig:
+            raise RuntimeError(
+                f"convolution resolved_config is not exact ImpulseConvolutionConfig: {type(conv_result.resolved_config)}"
+            )
+        if conv_result.resolved_config.mode != "same":
+            raise RuntimeError(f"convolution mode mismatch: got '{conv_result.resolved_config.mode}'")
+        if conv_result.resolved_config.impulse_zero_index != source_result.resolved_config.impulse_zero_index:
+            raise RuntimeError(
+                "convolution impulse_zero_index mismatch: "
+                f"got {conv_result.resolved_config.impulse_zero_index}, "
+                f"expected {source_result.resolved_config.impulse_zero_index}"
+            )
+        if conv_result.output_start_index != 0:
+            raise RuntimeError(
+                f"convolution output_start_index mismatch: got {conv_result.output_start_index}, expected 0"
+            )
+        if conv_result.model_level != "discrete_linear_convolution":
+            raise RuntimeError(f"convolution model_level mismatch: got '{conv_result.model_level}'")
+        if type(conv_result.values) is not np.ndarray:
+            raise RuntimeError(f"convolution values is not exact np.ndarray: {type(conv_result.values)}")
+        if conv_result.values.dtype != np.float64:
+            raise RuntimeError(f"convolution values dtype mismatch: got {conv_result.values.dtype}")
+        if conv_result.values.ndim != 1 or conv_result.values.shape != (len(arr),):
+            raise RuntimeError(
+                f"convolution values shape mismatch: got {conv_result.values.shape}, expected ({len(arr)},)"
+            )
+        if not conv_result.values.flags.c_contiguous:
+            raise RuntimeError("convolution values is not C-contiguous")
+        if conv_result.values.size > 0 and not np.all(np.isfinite(conv_result.values)):
+            raise RuntimeError("convolution values contains non-finite elements")
+        if conv_result.values is arr or np.shares_memory(conv_result.values, arr):
+            raise RuntimeError("convolution values memory aliases caller wave")
+        if conv_result.values is source_result.values or np.shares_memory(conv_result.values, source_result.values):
+            raise RuntimeError("convolution values memory aliases source values")
+
+        values = conv_result.values
+
+    # Step 13: Build resolved ChannelConfig from the validated snapshot.
+    resolved_config = ChannelConfig(
+        schema_version=validated_schema,
+        mode=validated_mode,
+        alpha=resolved_alpha,
+        impulse_source=resolved_source,
+    )
+
+    # Step 14: Final output verification.
     if type(values) is not np.ndarray:
         raise RuntimeError(f"Channel output is not exact np.ndarray: {type(values)}")
     if values.ndim != 1 or values.shape != (len(arr),):
@@ -156,17 +398,25 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
     if values.size > 0 and not np.all(np.isfinite(values)):
         raise RuntimeError("Channel output contains non-finite values")
 
-    # Dtype contract check
-    if config.mode == "none":
+    if validated_mode == "none":
         if values.dtype != arr.dtype:
             raise RuntimeError(f"none mode dtype mismatch: got {values.dtype}, expected {arr.dtype}")
-    elif config.mode == "legacy_lowpass":
+    elif validated_mode == "legacy_lowpass":
         if arr.dtype.kind == "f":
             if values.dtype != arr.dtype:
-                raise RuntimeError(f"legacy_lowpass mode float dtype mismatch: got {values.dtype}, expected {arr.dtype}")
+                raise RuntimeError(
+                    f"legacy_lowpass mode float dtype mismatch: got {values.dtype}, expected {arr.dtype}"
+                )
         elif arr.dtype.kind in {"b", "i", "u"}:
             if values.dtype != np.float64:
-                raise RuntimeError(f"legacy_lowpass mode integer/bool dtype mismatch: got {values.dtype}, expected float64")
+                raise RuntimeError(
+                    f"legacy_lowpass mode integer/bool dtype mismatch: got {values.dtype}, expected float64"
+                )
+    elif validated_mode == "impulse_response":
+        if values.dtype != np.float64:
+            raise RuntimeError(
+                f"impulse_response mode dtype mismatch: got {values.dtype}, expected float64"
+            )
 
     return ChannelResult(
         values=values,
