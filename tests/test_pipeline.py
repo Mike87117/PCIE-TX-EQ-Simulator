@@ -6,6 +6,7 @@ Verifies:
 2. run_pam4_simulation produces Pam4SimulationResult item-by-item matched against core APIs.
 3. run_simulation dispatches correctly based on Config type and raises TypeError for unsupported types.
 4. PCIeTxEqSimulator GUI instantiation, full_refresh(), and pam4_full_refresh() execute without exceptions.
+5. NRZ and PAM4 channel execution delegates exactly once through ChannelConfig/apply_channel.
 """
 
 import sys
@@ -13,6 +14,7 @@ import pytest
 import numpy as np
 from PyQt5.QtWidgets import QApplication
 
+import pcie_eq.pipeline as pipeline_module
 from pcie_eq.models import (
     NrzSimulationConfig,
     Pam4SimulationConfig,
@@ -25,7 +27,11 @@ from pcie_eq.pipeline import (
     run_simulation,
 )
 from pcie_eq.tx_eq import tx_eq_levels, gen6_pam4_fir
-from pcie_eq.channel import simple_channel
+from pcie_eq.channel_config import (
+    CHANNEL_CONFIG_CONTRACT_ID,
+    ChannelConfig,
+    apply_channel,
+)
 from pcie_eq.rx_eq import run_rx_pipeline
 from pcie_eq.metrics import (
     calculate_nrz_eye_metrics,
@@ -53,10 +59,13 @@ def test_run_nrz_simulation_item_by_item_contract():
 
     result = run_nrz_simulation(config)
 
-    # Independent computation via core functions
+    # Independent composition through the public channel boundary.
     expected_tx_symbols = tx_eq_levels(config.symbols, config.pre_db, config.de_db)
     expected_tx_wave = np.repeat(expected_tx_symbols, config.spb)
-    expected_ch_wave = simple_channel(expected_tx_wave, alpha=config.channel_alpha)
+    expected_ch_wave = apply_channel(
+        expected_tx_wave,
+        ChannelConfig(mode="legacy_lowpass", alpha=config.channel_alpha),
+    ).values
     expected_rx = run_rx_pipeline(
         expected_ch_wave,
         ctle_gain=config.ctle_gain,
@@ -106,12 +115,15 @@ def test_run_pam4_simulation_item_by_item_contract():
 
     result = run_pam4_simulation(config)
 
-    # Independent computation via core functions
+    # Independent composition through the public channel boundary.
     expected_tx_symbols, _ = gen6_pam4_fir(
         config.symbols, config.cm2, config.cm1, config.cp1
     )
     expected_tx_wave = np.repeat(expected_tx_symbols, config.spb)
-    expected_ch_wave = simple_channel(expected_tx_wave, alpha=config.channel_alpha)
+    expected_ch_wave = apply_channel(
+        expected_tx_wave,
+        ChannelConfig(mode="legacy_lowpass", alpha=config.channel_alpha),
+    ).values
     expected_phase, expected_score, expected_metrics = calculate_pam4_eye_metrics(
         expected_ch_wave, config.symbols, old_phase=config.old_phase, spb=config.spb
     )
@@ -124,6 +136,61 @@ def test_run_pam4_simulation_item_by_item_contract():
     assert result.t_center_phase == expected_phase
     assert result.t_center_score == pytest.approx(expected_score)
     assert result.pam4_eye_metrics == expected_metrics
+
+
+def test_nrz_pipeline_delegates_channel_once(monkeypatch):
+    """NRZ pipeline must construct the frozen legacy ChannelConfig and delegate exactly once."""
+    calls = []
+
+    def spy_apply_channel(wave, channel_config):
+        calls.append((wave, channel_config))
+        return apply_channel(wave, channel_config)
+
+    monkeypatch.setattr(pipeline_module, "apply_channel", spy_apply_channel)
+
+    config = NrzSimulationConfig(
+        symbols=np.tile([1.0, -1.0], 40),
+        channel_alpha=0.123,
+    )
+    result = pipeline_module.run_nrz_simulation(config)
+
+    assert isinstance(result, NrzSimulationResult)
+    assert len(calls) == 1
+    wave, channel_config = calls[0]
+    assert isinstance(wave, np.ndarray)
+    assert type(channel_config) is ChannelConfig
+    assert channel_config.schema_version == CHANNEL_CONFIG_CONTRACT_ID
+    assert channel_config.mode == "legacy_lowpass"
+    assert channel_config.alpha == config.channel_alpha
+    assert channel_config.impulse_source is None
+
+
+def test_pam4_pipeline_delegates_channel_once(monkeypatch):
+    """PAM4 pipeline must construct the frozen legacy ChannelConfig and delegate exactly once."""
+    calls = []
+
+    def spy_apply_channel(wave, channel_config):
+        calls.append((wave, channel_config))
+        return apply_channel(wave, channel_config)
+
+    monkeypatch.setattr(pipeline_module, "apply_channel", spy_apply_channel)
+
+    levels = np.array([-1.0, -1.0 / 3.0, 1.0 / 3.0, 1.0])
+    config = Pam4SimulationConfig(
+        symbols=np.tile(levels, 20),
+        channel_alpha=0.117,
+    )
+    result = pipeline_module.run_pam4_simulation(config)
+
+    assert isinstance(result, Pam4SimulationResult)
+    assert len(calls) == 1
+    wave, channel_config = calls[0]
+    assert isinstance(wave, np.ndarray)
+    assert type(channel_config) is ChannelConfig
+    assert channel_config.schema_version == CHANNEL_CONFIG_CONTRACT_ID
+    assert channel_config.mode == "legacy_lowpass"
+    assert channel_config.alpha == config.channel_alpha
+    assert channel_config.impulse_source is None
 
 
 def test_run_simulation_dispatcher():
