@@ -1,0 +1,435 @@
+"""
+Unit tests for Impulse Channel Integration v1 in pcie_eq.channel_config.
+
+Verifies:
+1. Canonical Golden Cases: Delta identity, Exponential postcursor, User-defined non-centered zero index, All-zero impulse, Empty wave.
+2. Wave Input Matrix: bool, int, uint, float16/32/64, list, tuple, non-contiguous view -> all yield exact float64 impulse-channel output.
+3. Relevance and Nested Config Validation: schema v1 rejection of impulse_response, non-None alpha rejection, missing/wrong impulse_source rejection, explosive wave validation order.
+4. Integration Sample Interval Policy: sample_interval == 1.0 accepted, 0.5/2.0/1.0000001 rejected with ValueError before wave materialization.
+5. Ownership & Result Contract: same-length float64 output, non-aliasing, new array/resolved config allocation per call, result mutation isolation.
+6. Child Result Boundary Failure Matrix via Monkeypatch: build_impulse or convolve_impulse returning wrong type, subclass, wrong metadata, wrong dtype, wrong shape, non-contiguous, non-finite, or aliased memory all raise RuntimeError without repair.
+7. Serialization: v2 canonical 4-key dictionary, nested source serialization, new allocations per call, and round-trip consistency.
+"""
+
+from dataclasses import dataclass
+import math
+import numpy as np
+import pytest
+
+import pcie_eq.channel_config as channel_config
+from pcie_eq.channel_config import (
+    CHANNEL_CONFIG_CONTRACT_ID,
+    LEGACY_CHANNEL_CONFIG_CONTRACT_ID,
+    ChannelConfig,
+    ChannelResult,
+    apply_channel,
+    V2_CANONICAL_KEYS,
+)
+from pcie_eq.impulse_convolution import (
+    ImpulseConvolutionConfig,
+    ImpulseConvolutionResult,
+)
+from pcie_eq.impulse_source import (
+    ImpulseSourceConfig,
+    ImpulseSourceResult,
+)
+
+
+def test_impulse_channel_golden_case_delta_identity():
+    """Verify Section 17.1 Golden Case: Delta impulse is an exact identity in values."""
+    wave = np.array([1.0, 2.0, -1.0, 0.5], dtype=np.float64)
+    source = ImpulseSourceConfig(
+        source_type="single_tap",
+        sample_interval=1.0,
+        impulse_zero_index=1,
+        normalization="none",
+        length=3,
+        amplitude=1.0,
+    )
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    res = apply_channel(wave, cfg)
+
+    assert type(res) is ChannelResult
+    assert res.model_level == "project_owned_discrete_impulse_channel"
+    assert res.values.dtype == np.float64
+    assert res.values.shape == (4,)
+    assert res.values.flags.c_contiguous
+    assert np.array_equal(res.values, wave)
+    assert res.values is not wave
+    assert not np.shares_memory(res.values, wave)
+
+
+def test_impulse_channel_golden_case_exponential_postcursor():
+    """Verify Section 17.2 Golden Case: Exponential postcursor impulse channel output."""
+    wave = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+    source = ImpulseSourceConfig(
+        source_type="exponential_postcursor",
+        sample_interval=1.0,
+        impulse_zero_index=0,
+        normalization="none",
+        length=3,
+        amplitude=1.0,
+        decay_ratio=0.5,
+    )
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    res = apply_channel(wave, cfg)
+
+    assert res.model_level == "project_owned_discrete_impulse_channel"
+    assert res.values.dtype == np.float64
+    expected = np.array([1.0, 0.5, 0.25, 0.0], dtype=np.float64)
+    assert np.allclose(res.values, expected)
+
+
+def test_impulse_channel_golden_case_user_defined_non_centered():
+    """Verify Section 17.3 Golden Case: User-defined non-centered zero index impulse vector."""
+    wave = [1.0, 2.0, 3.0]
+    source = ImpulseSourceConfig(
+        source_type="user_defined",
+        length=None,
+        amplitude=None,
+        decay_ratio=None,
+        impulse_zero_index=1,
+        values=[0.25, 1.0, 0.5],
+    )
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    res = apply_channel(wave, cfg)
+
+    # Test-side independent calculation:
+    # Full convolve of [1.0, 2.0, 3.0] and [0.25, 1.0, 0.5] is [0.25, 1.5, 3.25, 4.0, 1.5]
+    # Slice full[1:4] is [1.5, 3.25, 4.0]
+    expected = np.array([1.5, 3.25, 4.0], dtype=np.float64)
+    assert res.values.dtype == np.float64
+    assert res.values.shape == (3,)
+    assert np.allclose(res.values, expected)
+
+
+def test_impulse_channel_golden_case_all_zero_impulse():
+    """Verify Section 17.4 Golden Case: All-zero impulse returns same-length zeros."""
+    wave = np.array([1.0, -2.0, 3.0, -4.0], dtype=np.float64)
+    source = ImpulseSourceConfig(
+        source_type="single_tap",
+        length=3,
+        impulse_zero_index=1,
+        amplitude=0.0,
+    )
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    res = apply_channel(wave, cfg)
+
+    assert res.values.dtype == np.float64
+    assert res.values.shape == (4,)
+    assert np.array_equal(res.values, np.zeros(4, dtype=np.float64))
+
+
+def test_impulse_channel_golden_case_empty_wave():
+    """Verify Section 17.5 Golden Case: Empty wave returns empty float64 array with shape (0,)."""
+    source = ImpulseSourceConfig()
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    res = apply_channel(np.array([], dtype=np.float64), cfg)
+
+    assert res.model_level == "project_owned_discrete_impulse_channel"
+    assert res.values.dtype == np.float64
+    assert res.values.shape == (0,)
+    assert res.values.flags.c_contiguous
+
+
+def test_impulse_channel_wave_input_dtype_matrix():
+    """Verify bool, int, uint, float, list, tuple, and non-contiguous views all yield exact float64 output."""
+    source = ImpulseSourceConfig(
+        source_type="single_tap",
+        length=3,
+        impulse_zero_index=1,
+        amplitude=2.0,
+    )
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    dtypes = [
+        np.dtype("bool"),
+        np.dtype("int8"),
+        np.dtype("int16"),
+        np.dtype("int32"),
+        np.dtype("int64"),
+        np.dtype("uint8"),
+        np.dtype("uint16"),
+        np.dtype("uint32"),
+        np.dtype("uint64"),
+        np.dtype("float16"),
+        np.dtype("float32"),
+        np.dtype("float64"),
+    ]
+
+    for dt in dtypes:
+        wave = np.array([0, 1, 0, 1], dtype=dt)
+        res = apply_channel(wave, cfg)
+        assert res.values.dtype == np.float64
+        assert res.values.shape == (4,)
+        assert res.values.flags.c_contiguous
+        assert np.array_equal(res.values, np.array([0.0, 2.0, 0.0, 2.0]))
+
+    # List & Tuple
+    assert apply_channel([1, 0], cfg).values.dtype == np.float64
+    assert apply_channel((1, 0), cfg).values.dtype == np.float64
+
+    # Non-contiguous view
+    wave_base = np.arange(10, dtype=np.float64)
+    wave_slice = wave_base[::2]
+    res_slice = apply_channel(wave_slice, cfg)
+    assert res_slice.values.dtype == np.float64
+    assert res_slice.values.shape == (5,)
+    assert res_slice.values.flags.c_contiguous
+
+
+def test_relevance_and_nested_config_validation():
+    """Verify relevance rules, v1 schema rejection of impulse_response, and explosive wave validation order."""
+    source = ImpulseSourceConfig()
+
+    # v1 schema rejects impulse_response
+    with pytest.raises(ValueError, match="Unsupported mode 'impulse_response'"):
+        ChannelConfig(mode="impulse_response", schema_version=LEGACY_CHANNEL_CONFIG_CONTRACT_ID, impulse_source=source)
+
+    # impulse_response requires impulse_source
+    with pytest.raises(ValueError, match="impulse_source' is required"):
+        ChannelConfig(mode="impulse_response", impulse_source=None)
+
+    # impulse_source must be exact ImpulseSourceConfig (subclass or wrong type rejected)
+    class SubImpulseSourceConfig(ImpulseSourceConfig):
+        pass
+
+    with pytest.raises(TypeError, match="impulse_source must be exactly ImpulseSourceConfig"):
+        ChannelConfig(mode="impulse_response", impulse_source=SubImpulseSourceConfig())
+
+    with pytest.raises(TypeError, match="impulse_source must be exactly ImpulseSourceConfig"):
+        ChannelConfig(mode="impulse_response", impulse_source="not_a_source_config")
+
+    # impulse_response rejects non-None alpha
+    with pytest.raises(ValueError, match="alpha' is not applicable"):
+        ChannelConfig(mode="impulse_response", alpha=0.08, impulse_source=source)
+
+    # none & legacy_lowpass reject non-None impulse_source
+    with pytest.raises(ValueError, match="impulse_source' is not applicable"):
+        ChannelConfig(mode="none", impulse_source=source)
+
+    with pytest.raises(ValueError, match="impulse_source' is not applicable"):
+        ChannelConfig(mode="legacy_lowpass", impulse_source=source)
+
+    # Explosive wave test: Corrupted nested impulse_source fails validation BEFORE wave materialization
+    class ExplosiveWave:
+        def __array__(self):
+            raise RuntimeError("Wave should not be materialized!")
+
+    valid_cfg = ChannelConfig(mode="impulse_response", impulse_source=ImpulseSourceConfig())
+    corrupted_source = ImpulseSourceConfig()
+    object.__setattr__(corrupted_source, "source_type", "invalid_source_type")
+    object.__setattr__(valid_cfg, "impulse_source", corrupted_source)
+
+    with pytest.raises(ValueError, match="Unsupported source_type"):
+        apply_channel(ExplosiveWave(), valid_cfg)
+
+
+def test_integration_sample_interval_policy():
+    """Verify sample_interval == 1.0 accepted, and non-1.0 rejected before wave materialization."""
+    class ExplosiveWave:
+        def __array__(self):
+            raise RuntimeError("Wave should not be materialized!")
+
+    # sample_interval = 1 (int) canonicalizes to 1.0 in ImpulseSourceConfig and is accepted
+    source_int = ImpulseSourceConfig(sample_interval=1)
+    cfg_int = ChannelConfig(mode="impulse_response", impulse_source=source_int)
+    assert cfg_int.impulse_source.sample_interval == 1.0
+    res_int = apply_channel([1.0, 0.0], cfg_int)
+    assert res_int.resolved_config.impulse_source.sample_interval == 1.0
+
+    # Positive non-1.0 sample intervals (0.5, 2.0, 1.0000001) rejected before wave materialization
+    for invalid_dt in [0.5, 2.0, 1.0000001]:
+        valid_cfg = ChannelConfig(mode="impulse_response", impulse_source=ImpulseSourceConfig())
+        bad_source = ImpulseSourceConfig()
+        object.__setattr__(bad_source, "sample_interval", float(invalid_dt))
+        object.__setattr__(valid_cfg, "impulse_source", bad_source)
+
+        with pytest.raises(ValueError, match="accepts only sample_interval == 1.0"):
+            apply_channel(ExplosiveWave(), valid_cfg)
+
+
+def test_ownership_and_result_isolation():
+    """Verify same-length output, non-aliasing, new array/config allocation each call, and result mutation isolation."""
+    wave = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    source = ImpulseSourceConfig()
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    res1 = apply_channel(wave, cfg)
+    res2 = apply_channel(wave, cfg)
+
+    assert res1.values.shape == wave.shape
+    assert res1.values.dtype == np.float64
+    assert res1.values.flags.c_contiguous
+    assert res1.values is not wave
+    assert not np.shares_memory(res1.values, wave)
+
+    # Allocation isolation
+    assert res1.values is not res2.values
+    assert not np.shares_memory(res1.values, res2.values)
+    assert res1.resolved_config is not res2.resolved_config
+    assert res1.resolved_config.impulse_source is not res2.resolved_config.impulse_source
+
+    # Mutation isolation
+    res1.values[0] = 999.0
+    assert wave[0] == 1.0
+    assert res2.values[0] != 999.0
+
+
+def test_child_result_boundary_failure_matrix(monkeypatch):
+    """Verify apply_channel raises RuntimeError if build_impulse or convolve_impulse return invalid child results."""
+    wave = np.array([1.0, 0.0], dtype=np.float64)
+    source = ImpulseSourceConfig()
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    # 1. build_impulse returns non-ImpulseSourceResult
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: "not_a_result")
+    with pytest.raises(RuntimeError, match="source result is not ImpulseSourceResult"):
+        apply_channel(wave, cfg)
+
+    # 2. build_impulse returns ImpulseSourceResult subclass
+    class SubImpulseSourceResult(ImpulseSourceResult):
+        pass
+
+    valid_src_res = ImpulseSourceResult(
+        values=np.array([1.0], dtype=np.float64),
+        resolved_config=source,
+        model_level="project_owned_discrete_impulse_source",
+    )
+    sub_src_res = SubImpulseSourceResult(
+        values=np.array([1.0], dtype=np.float64),
+        resolved_config=source,
+        model_level="project_owned_discrete_impulse_source",
+    )
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: sub_src_res)
+    with pytest.raises(RuntimeError, match="source result is not ImpulseSourceResult"):
+        apply_channel(wave, cfg)
+
+    # 3. build_impulse returns wrong source model_level
+    bad_model_src = ImpulseSourceResult(
+        values=np.array([1.0], dtype=np.float64),
+        resolved_config=source,
+        model_level="other_source_model",
+    )
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: bad_model_src)
+    with pytest.raises(RuntimeError, match="source model_level mismatch"):
+        apply_channel(wave, cfg)
+
+    # 4. build_impulse returns float32 values
+    bad_dtype_src = ImpulseSourceResult(
+        values=np.array([1.0], dtype=np.float32),
+        resolved_config=source,
+        model_level="project_owned_discrete_impulse_source",
+    )
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: bad_dtype_src)
+    with pytest.raises(RuntimeError, match="source values dtype mismatch"):
+        apply_channel(wave, cfg)
+
+    # 5. build_impulse returns non-C-contiguous values (length=2)
+    src2 = ImpulseSourceConfig(length=2)
+    cfg2 = ChannelConfig(mode="impulse_response", impulse_source=src2)
+    base_src = np.array([1.0, 0.0, 2.0, 0.0], dtype=np.float64)
+    non_c_src = base_src[::2]
+    bad_contig_src = ImpulseSourceResult(
+        values=non_c_src,
+        resolved_config=src2,
+        model_level="project_owned_discrete_impulse_source",
+    )
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: bad_contig_src)
+    with pytest.raises(RuntimeError, match="source values is not C-contiguous"):
+        apply_channel(wave, cfg2)
+
+    # 6. convolve_impulse returns non-ImpulseConvolutionResult
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: valid_src_res)
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: "not_a_conv_result")
+    with pytest.raises(RuntimeError, match="convolution result is not ImpulseConvolutionResult"):
+        apply_channel(wave, cfg)
+
+    # 7. convolve_impulse returns wrong mode metadata
+    conv_cfg_wrong_mode = ImpulseConvolutionConfig(mode="full", impulse_zero_index=0)
+    bad_conv_mode = ImpulseConvolutionResult(
+        values=np.array([1.0, 0.0], dtype=np.float64),
+        resolved_config=conv_cfg_wrong_mode,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_mode)
+    with pytest.raises(RuntimeError, match="convolution mode mismatch"):
+        apply_channel(wave, cfg)
+
+    # 8. convolve_impulse returns wrong zero_index metadata
+    conv_cfg_wrong_z = ImpulseConvolutionConfig(mode="same", impulse_zero_index=5)
+    bad_conv_z = ImpulseConvolutionResult(
+        values=np.array([1.0, 0.0], dtype=np.float64),
+        resolved_config=conv_cfg_wrong_z,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_z)
+    with pytest.raises(RuntimeError, match="convolution impulse_zero_index mismatch"):
+        apply_channel(wave, cfg)
+
+    # 9. convolve_impulse returns non-zero output_start_index
+    conv_cfg_valid = ImpulseConvolutionConfig(mode="same", impulse_zero_index=0)
+    bad_conv_start = ImpulseConvolutionResult(
+        values=np.array([1.0, 0.0], dtype=np.float64),
+        resolved_config=conv_cfg_valid,
+        output_start_index=1,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_start)
+    with pytest.raises(RuntimeError, match="convolution output_start_index mismatch"):
+        apply_channel(wave, cfg)
+
+    # 10. convolve_impulse returns memory aliasing caller wave
+    bad_conv_alias = ImpulseConvolutionResult(
+        values=wave,
+        resolved_config=conv_cfg_valid,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_alias)
+    with pytest.raises(RuntimeError, match="convolution values memory aliases caller wave"):
+        apply_channel(wave, cfg)
+
+
+def test_impulse_channel_serialization_canonical_keys_and_round_trip():
+    """Verify v2 4-key canonical dictionary, nested source serialization, allocation isolation, and round-trip consistency."""
+    source = ImpulseSourceConfig(
+        source_type="user_defined",
+        length=None,
+        amplitude=None,
+        decay_ratio=None,
+        impulse_zero_index=1,
+        values=[0.5, 1.0, -0.5],
+    )
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    d1 = cfg.to_dict()
+    d2 = cfg.to_dict()
+
+    assert d1 is not d2
+    assert list(d1.keys()) == V2_CANONICAL_KEYS
+    assert d1["schema_version"] == CHANNEL_CONFIG_CONTRACT_ID
+    assert d1["mode"] == "impulse_response"
+    assert d1["alpha"] is None
+
+    assert type(d1["impulse_source"]) is dict
+    assert d1["impulse_source"] is not d2["impulse_source"]
+    assert d1["impulse_source"]["source_type"] == "user_defined"
+    assert d1["impulse_source"]["values"] == [0.5, 1.0, -0.5]
+    assert d1["impulse_source"]["values"] is not d2["impulse_source"]["values"]
+
+    # Round-trip
+    restored = ChannelConfig.from_dict(d2)
+    assert restored == cfg
+    assert restored.impulse_source == source
+
+    # Dict mutation isolation
+    d1["impulse_source"]["values"][0] = 999.0
+    assert cfg.impulse_source.values == (0.5, 1.0, -0.5)

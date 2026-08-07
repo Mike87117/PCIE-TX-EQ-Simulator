@@ -15,6 +15,7 @@ def test_channel_config_exact_export_surface():
     """Verify pcie_eq.channel_config exports exact __all__ in exact required order."""
     expected_all = [
         "CHANNEL_CONFIG_CONTRACT_ID",
+        "LEGACY_CHANNEL_CONFIG_CONTRACT_ID",
         "ChannelConfig",
         "ChannelResult",
         "apply_channel",
@@ -23,6 +24,9 @@ def test_channel_config_exact_export_surface():
     assert channel_config.__all__ == expected_all
     for name in expected_all:
         assert hasattr(channel_config, name), f"channel_config module missing exported attribute: {name}"
+
+    assert channel_config.CHANNEL_CONFIG_CONTRACT_ID == "pcie_eq-channel-config-v2"
+    assert channel_config.LEGACY_CHANNEL_CONFIG_CONTRACT_ID == "pcie_eq-channel-config-v1"
 
 
 def test_channel_config_ast_no_forbidden_gui_models_or_pipeline_imports():

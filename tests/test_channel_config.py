@@ -3,12 +3,12 @@ Unit tests for pcie_eq.channel_config core module.
 
 Verifies:
 1. Public API surface, frozen dataclasses, frozen instance mutation rejections, and exact ChannelConfig type/subclass check.
-2. Constructor & defensive re-validation for schema, mode, and alpha applicability/range before wave materialization.
+2. Constructor & defensive re-validation for v1 and v2 schemas, mode taxonomy, alpha applicability, and impulse_source relevance/type checks before wave materialization.
 3. Wave input validation: list/tuple/ndarray, scalar/2D/complex/string/NaN/Inf rejection.
-4. none mode: identity copy, exact dtype matrix preservation (empty/non-empty), non-aliasing, and non-contiguous slice handling.
-5. legacy_lowpass mode: default & explicit alpha golden cases, float preservation, int/uint/bool/tuple promotion to float64, empty matrix, and direct simple_channel equivalence.
+4. none mode: identity copy under both v1 and v2 schemas, exact dtype matrix preservation (empty/non-empty), non-aliasing, and non-contiguous slice handling.
+5. legacy_lowpass mode: default & explicit alpha golden cases under both v1 and v2 schemas, float preservation, int/uint/bool/tuple promotion to float64, empty matrix, and direct simple_channel equivalence.
 6. Helper contract failures via monkeypatch (type, subclass, shape, dtype, contiguity, alias/caller return, non-finite).
-7. Serialization to_dict() / from_dict() canonical 3-key order, new dictionary allocation per call, round-trip, and error handling.
+7. Serialization to_dict() / from_dict() canonical v1 (3-key) and v2 (4-key) order, new dictionary allocation per call, round-trip, and error handling.
 """
 
 from dataclasses import FrozenInstanceError
@@ -19,12 +19,15 @@ import pytest
 import pcie_eq.channel_config as channel_config
 from pcie_eq.channel_config import (
     CHANNEL_CONFIG_CONTRACT_ID,
+    LEGACY_CHANNEL_CONFIG_CONTRACT_ID,
     ChannelConfig,
     ChannelResult,
     apply_channel,
-    CANONICAL_KEYS,
+    V1_CANONICAL_KEYS,
+    V2_CANONICAL_KEYS,
 )
 from pcie_eq.channel import simple_channel
+from pcie_eq.impulse_source import ImpulseSourceConfig
 
 
 def test_channel_config_and_result_frozen_mutation_rejection():
@@ -74,7 +77,7 @@ def test_numpy_scalar_alpha_rejection():
 
 
 def test_channel_config_constructor_and_defensive_validation():
-    """Verify ChannelConfig constructor and defensive re-validation contracts."""
+    """Verify ChannelConfig constructor and defensive re-validation contracts across v1 and v2 schemas."""
     # schema_version validation
     with pytest.raises(TypeError, match="schema_version must be str"):
         ChannelConfig(mode="none", schema_version=123)
@@ -89,9 +92,20 @@ def test_channel_config_constructor_and_defensive_validation():
     with pytest.raises(ValueError, match="Unsupported mode"):
         ChannelConfig(mode="none ")
 
+    # v1 schema rejects impulse_response mode
+    with pytest.raises(ValueError, match="Unsupported mode 'impulse_response' for schema"):
+        ChannelConfig(mode="impulse_response", schema_version=LEGACY_CHANNEL_CONFIG_CONTRACT_ID)
+
     # alpha applicability for mode none
     with pytest.raises(ValueError, match="not applicable for mode 'none'"):
         ChannelConfig(mode="none", alpha=0.08)
+
+    # impulse_source applicability for modes none and legacy_lowpass
+    src_cfg = ImpulseSourceConfig()
+    with pytest.raises(ValueError, match="not applicable for mode 'none'"):
+        ChannelConfig(mode="none", impulse_source=src_cfg)
+    with pytest.raises(ValueError, match="not applicable for mode 'legacy_lowpass'"):
+        ChannelConfig(mode="legacy_lowpass", impulse_source=src_cfg)
 
     # alpha validation for legacy_lowpass
     for invalid_alpha in [True, False, "0.08", (0.08,)]:
@@ -145,7 +159,8 @@ def test_wave_input_validation():
 
 def test_none_mode_identity_copy_and_dtype_matrix():
     """Verify none mode produces non-aliasing C-contiguous identity copy across all dtypes (including empty cases)."""
-    cfg = ChannelConfig(mode="none")
+    cfg_v2 = ChannelConfig(mode="none")
+    cfg_v1 = ChannelConfig(mode="none", schema_version=LEGACY_CHANNEL_CONFIG_CONTRACT_ID)
 
     dtypes = [
         np.dtype("bool"),
@@ -162,74 +177,76 @@ def test_none_mode_identity_copy_and_dtype_matrix():
         np.dtype("float64"),
     ]
 
-    for dt in dtypes:
-        # Non-empty case
-        wave = np.array([0, 1, 0, 1], dtype=dt)
-        res = apply_channel(wave, cfg)
-        assert res.model_level == "identity"
-        assert res.resolved_config.alpha is None
-        assert res.values.dtype == dt
-        assert res.values.shape == wave.shape
-        assert res.values.flags.c_contiguous
-        assert res.values is not wave
-        assert not np.shares_memory(res.values, wave)
-        assert np.array_equal(res.values, wave)
+    for cfg in [cfg_v2, cfg_v1]:
+        for dt in dtypes:
+            # Non-empty case
+            wave = np.array([0, 1, 0, 1], dtype=dt)
+            res = apply_channel(wave, cfg)
+            assert res.model_level == "identity"
+            assert res.resolved_config.alpha is None
+            assert res.values.dtype == dt
+            assert res.values.shape == wave.shape
+            assert res.values.flags.c_contiguous
+            assert res.values is not wave
+            assert not np.shares_memory(res.values, wave)
+            assert np.array_equal(res.values, wave)
 
-        # Empty case
-        empty_wave = np.array([], dtype=dt)
-        res_empty = apply_channel(empty_wave, cfg)
-        assert res_empty.values.dtype == dt
-        assert res_empty.values.shape == (0,)
-        assert res_empty.values is not empty_wave
-        assert not np.shares_memory(res_empty.values, empty_wave)
+            # Empty case
+            empty_wave = np.array([], dtype=dt)
+            res_empty = apply_channel(empty_wave, cfg)
+            assert res_empty.values.dtype == dt
+            assert res_empty.values.shape == (0,)
+            assert res_empty.values is not empty_wave
+            assert not np.shares_memory(res_empty.values, empty_wave)
 
-    # Empty list [] & tuple () for none mode
-    res_empty_list = apply_channel([], cfg)
-    assert res_empty_list.values.shape == (0,)
-    res_empty_tuple = apply_channel((), cfg)
-    assert res_empty_tuple.values.shape == (0,)
+        # Empty list [] & tuple () for none mode
+        res_empty_list = apply_channel([], cfg)
+        assert res_empty_list.values.shape == (0,)
+        res_empty_tuple = apply_channel((), cfg)
+        assert res_empty_tuple.values.shape == (0,)
 
-    # Non-contiguous input slice
-    wave_base = np.arange(10, dtype=np.float64)
-    wave_slice = wave_base[::2]
-    assert not wave_slice.flags.c_contiguous
+        # Non-contiguous input slice
+        wave_base = np.arange(10, dtype=np.float64)
+        wave_slice = wave_base[::2]
+        assert not wave_slice.flags.c_contiguous
 
-    res_slice = apply_channel(wave_slice, cfg)
-    assert res_slice.values.flags.c_contiguous
-    assert res_slice.values.dtype == np.float64
-    assert not np.shares_memory(res_slice.values, wave_base)
-    assert np.array_equal(res_slice.values, wave_slice)
+        res_slice = apply_channel(wave_slice, cfg)
+        assert res_slice.values.flags.c_contiguous
+        assert res_slice.values.dtype == np.float64
+        assert not np.shares_memory(res_slice.values, wave_base)
+        assert np.array_equal(res_slice.values, wave_slice)
 
 
 def test_legacy_lowpass_golden_cases_and_equivalence():
-    """Verify legacy_lowpass default/explicit alpha golden cases and direct simple_channel equivalence."""
-    # Golden case 1: float64 default alpha (0.08)
-    wave1 = np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float64)
-    cfg1 = ChannelConfig(mode="legacy_lowpass")
-    res1 = apply_channel(wave1, cfg1)
+    """Verify legacy_lowpass default/explicit alpha golden cases and direct simple_channel equivalence across schemas."""
+    for schema_ver in [CHANNEL_CONFIG_CONTRACT_ID, LEGACY_CHANNEL_CONFIG_CONTRACT_ID]:
+        # Golden case 1: float64 default alpha (0.08)
+        wave1 = np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float64)
+        cfg1 = ChannelConfig(mode="legacy_lowpass", schema_version=schema_ver)
+        res1 = apply_channel(wave1, cfg1)
 
-    assert res1.model_level == "teaching_approximation"
-    assert res1.resolved_config.alpha == 0.08
-    assert res1.values.dtype == np.float64
-    expected1 = np.array([0.0, 0.08, 0.1536, 0.141312], dtype=np.float64)
-    assert np.allclose(res1.values, expected1)
+        assert res1.model_level == "teaching_approximation"
+        assert res1.resolved_config.alpha == 0.08
+        assert res1.values.dtype == np.float64
+        expected1 = np.array([0.0, 0.08, 0.1536, 0.141312], dtype=np.float64)
+        assert np.allclose(res1.values, expected1)
 
-    # Golden case 2: int64 explicit alpha 0.5 (promotes to float64)
-    wave2 = np.array([0, 1, 1, 0], dtype=np.int64)
-    cfg2 = ChannelConfig(mode="legacy_lowpass", alpha=0.5)
-    res2 = apply_channel(wave2, cfg2)
+        # Golden case 2: int64 explicit alpha 0.5 (promotes to float64)
+        wave2 = np.array([0, 1, 1, 0], dtype=np.int64)
+        cfg2 = ChannelConfig(mode="legacy_lowpass", alpha=0.5, schema_version=schema_ver)
+        res2 = apply_channel(wave2, cfg2)
 
-    assert res2.resolved_config.alpha == 0.5
-    assert res2.values.dtype == np.float64
-    expected2 = np.array([0.0, 0.5, 0.75, 0.375], dtype=np.float64)
-    assert np.allclose(res2.values, expected2)
+        assert res2.resolved_config.alpha == 0.5
+        assert res2.values.dtype == np.float64
+        expected2 = np.array([0.0, 0.5, 0.75, 0.375], dtype=np.float64)
+        assert np.allclose(res2.values, expected2)
 
-    # Direct simple_channel equivalence across floats and ints
-    for test_wave in [wave1, wave2, np.array([1, 0, -1, 1], dtype=np.int16), np.array([0.5, -0.5], dtype=np.float32)]:
-        direct_out = simple_channel(test_wave, alpha=0.08)
-        res_equiv = apply_channel(test_wave, cfg1)
-        assert res_equiv.values.dtype == direct_out.dtype
-        assert np.array_equal(res_equiv.values, direct_out)
+        # Direct simple_channel equivalence across floats and ints
+        for test_wave in [wave1, wave2, np.array([1, 0, -1, 1], dtype=np.int16), np.array([0.5, -0.5], dtype=np.float32)]:
+            direct_out = simple_channel(test_wave, alpha=0.08)
+            res_equiv = apply_channel(test_wave, cfg1)
+            assert res_equiv.values.dtype == direct_out.dtype
+            assert np.array_equal(res_equiv.values, direct_out)
 
 
 def test_legacy_lowpass_empty_inputs_dtype_matrix_cases():
@@ -319,24 +336,35 @@ def test_helper_contract_failures_raise_runtime_error(monkeypatch):
 
 
 def test_serialization_canonical_keys_and_to_dict_allocation_isolation():
-    """Verify to_dict() returns a new dictionary per call, 3-key canonical order, and round-trip consistency."""
-    cfg_none = ChannelConfig(mode="none")
-    d1 = cfg_none.to_dict()
-    d2 = cfg_none.to_dict()
+    """Verify to_dict() returns a new dictionary per call, v1 3-key & v2 4-key canonical order, and round-trip consistency."""
+    # V2 schema default
+    cfg_v2 = ChannelConfig(mode="none")
+    d1 = cfg_v2.to_dict()
+    d2 = cfg_v2.to_dict()
 
     assert d1 is not d2
-    assert list(d1.keys()) == CANONICAL_KEYS
-    assert d1 == {"schema_version": CHANNEL_CONFIG_CONTRACT_ID, "mode": "none", "alpha": None}
+    assert list(d1.keys()) == V2_CANONICAL_KEYS
+    assert d1 == {"schema_version": CHANNEL_CONFIG_CONTRACT_ID, "mode": "none", "alpha": None, "impulse_source": None}
 
     d1["mode"] = "modified_mode"
-    assert cfg_none.to_dict()["mode"] == "none"
+    assert cfg_v2.to_dict()["mode"] == "none"
+    assert ChannelConfig.from_dict(d2) == cfg_v2
 
-    assert ChannelConfig.from_dict(d2) == cfg_none
+    # V1 schema
+    cfg_v1 = ChannelConfig(mode="none", schema_version=LEGACY_CHANNEL_CONFIG_CONTRACT_ID)
+    d_v1_1 = cfg_v1.to_dict()
+    d_v1_2 = cfg_v1.to_dict()
 
+    assert d_v1_1 is not d_v1_2
+    assert list(d_v1_1.keys()) == V1_CANONICAL_KEYS
+    assert d_v1_1 == {"schema_version": LEGACY_CHANNEL_CONFIG_CONTRACT_ID, "mode": "none", "alpha": None}
+    assert ChannelConfig.from_dict(d_v1_2) == cfg_v1
+
+    # legacy_lowpass v2
     cfg_lp = ChannelConfig(mode="legacy_lowpass", alpha=0.12)
     d_lp = cfg_lp.to_dict()
-    assert list(d_lp.keys()) == CANONICAL_KEYS
-    assert d_lp == {"schema_version": CHANNEL_CONFIG_CONTRACT_ID, "mode": "legacy_lowpass", "alpha": 0.12}
+    assert list(d_lp.keys()) == V2_CANONICAL_KEYS
+    assert d_lp == {"schema_version": CHANNEL_CONFIG_CONTRACT_ID, "mode": "legacy_lowpass", "alpha": 0.12, "impulse_source": None}
     assert ChannelConfig.from_dict(d_lp) == cfg_lp
 
     # Resolved config round-trip
@@ -352,24 +380,38 @@ def test_serialization_error_rejections():
     with pytest.raises(TypeError, match="must be a Mapping"):
         ChannelConfig.from_dict("not_a_mapping")
 
-    valid_dict = ChannelConfig(mode="none").to_dict()
+    # Missing schema_version key
+    with pytest.raises(ValueError, match="missing keys"):
+        ChannelConfig.from_dict({"mode": "none", "alpha": None})
 
-    missing_dict = valid_dict.copy()
+    valid_dict_v2 = ChannelConfig(mode="none").to_dict()
+
+    missing_dict = valid_dict_v2.copy()
     del missing_dict["alpha"]
     with pytest.raises(ValueError, match="missing keys"):
         ChannelConfig.from_dict(missing_dict)
 
-    extra_dict = valid_dict.copy()
+    extra_dict = valid_dict_v2.copy()
     extra_dict["extra_param"] = 123
     with pytest.raises(ValueError, match="extra keys"):
         ChannelConfig.from_dict(extra_dict)
 
-    bad_type_dict = valid_dict.copy()
+    # v1 dictionary with extra impulse_source key must be rejected
+    v1_with_source = {
+        "schema_version": LEGACY_CHANNEL_CONFIG_CONTRACT_ID,
+        "mode": "none",
+        "alpha": None,
+        "impulse_source": None,
+    }
+    with pytest.raises(ValueError, match="extra keys"):
+        ChannelConfig.from_dict(v1_with_source)
+
+    bad_type_dict = valid_dict_v2.copy()
     bad_type_dict["schema_version"] = 12345
     with pytest.raises(TypeError, match="schema_version in dict must be str"):
         ChannelConfig.from_dict(bad_type_dict)
 
-    bad_ver_dict = valid_dict.copy()
+    bad_ver_dict = valid_dict_v2.copy()
     bad_ver_dict["schema_version"] = "pcie_eq-channel-config-v999"
     with pytest.raises(ValueError, match="Unknown schema_version"):
         ChannelConfig.from_dict(bad_ver_dict)
