@@ -210,17 +210,65 @@ The DFE corrected-sample and decision vectors inherit the same phase because the
 
 The DFE feedback equation itself is outside the scope of this contract and must remain numerically unchanged in 30B except for validation required to enforce the frozen sampling coordinate.
 
-## 12. NRZ phase-sensitive eye metric semantics
+## 12. NRZ phase-centered trace population
+
+Channel/CTLE metrics and NRZ line-eye rendering must derive their trace population from the same resolved phase and the same existing `max_traces` selection policy.
+
+For each measured symbol index `n >= warmup_symbols` and phase `p`:
+
+```text
+center = n * spb + p
+trace_start = center - spb
+trace_length = 2 * spb
+```
+
+A candidate trace is eligible only if:
+
+```text
+trace_start >= 0
+trace_start + trace_length <= len(wave)
+```
+
+Let `eligible_starts` be the ordered trace starts for all eligible measured symbols.
+
+The existing `max_traces` behavior is frozen for 30B:
+
+```text
+if len(eligible_starts) > max_traces:
+    idx = linspace(0, len(eligible_starts) - 1, max_traces, dtype=int)
+    sampled_starts = eligible_starts[idx]
+else:
+    sampled_starts = eligible_starts
+```
+
+The phase-sensitive metric samples and the rendered/metric 2-UI trace set must use this same `sampled_starts` population. 30B must not change metrics to use all symbols while rendering uses only `max_traces`, or vice versa.
+
+For each sampled trace:
+
+```text
+center_index_in_trace = spb
+absolute_center = sampled_start + spb
+```
+
+and `absolute_center` must equal the canonical symbol sample position `n * spb + p` for that trace.
+
+If no eligible traces exist, the existing NRZ zero-fallback metric structure remains required and line-eye rendering remains empty.
+
+## 13. NRZ phase-sensitive eye metric semantics
 
 Channel and CTLE NRZ eye metrics must use the same resolved `sampling_phase` as DFE.
 
-For eligible symbol indices `n >= warmup_symbols`, define:
+From the phase-centered trace population in Section 12:
 
 ```text
-center_samples = wave[n * spb + sampling_phase]
+center_samples = segs[:, spb]
 ```
 
-for indices that are within the waveform.
+Equivalently, each selected center sample is at:
+
+```text
+n * spb + sampling_phase
+```
 
 The following metrics are phase-sensitive and must be derived from these `center_samples`:
 
@@ -255,40 +303,25 @@ margin_5pct = 0.0
 max(center_samples) - min(center_samples)
 ```
 
-If no eligible center samples exist, the existing zero-fallback metric structure remains required.
-
-### 12.1 `eye_max` / `eye_min`
+### 13.1 `eye_max` / `eye_min`
 
 `eye_max` and `eye_min` are frozen as 2-UI waveform-envelope diagnostics, not receiver decision-point metrics.
 
-They may continue to be derived from all samples in the rendered/metric 2-UI trace population. They do not participate in phase resolution or future NRZ auto-center scoring.
+They are derived from all samples in the same phase-centered, `max_traces`-limited 2-UI trace population used by Section 12.
+
+They do not participate in phase resolution or future NRZ auto-center scoring.
 
 Implementation 30B must document any numerical delta caused solely by re-centering the trace population around the resolved phase.
 
-### 12.2 `error_count`
+### 13.2 `error_count`
 
 For non-DFE NRZ channel/CTLE eye metrics, the current value remains `0` in 30B. This contract does not introduce a slicer/error model for those waveform metrics.
 
-## 13. NRZ 2-UI eye rendering alignment
+## 14. NRZ 2-UI eye rendering alignment
 
 The rendered line eye must visually center the same resolved phase used by DFE and phase-sensitive metrics.
 
-For symbol index `n` and phase `p`:
-
-```text
-center = n * spb + p
-trace_start = center - spb
-trace_length = 2 * spb
-```
-
-Only traces satisfying:
-
-```text
-trace_start >= 0
-trace_start + trace_length <= len(wave)
-```
-
-are eligible for rendering.
+The rendering trace set is exactly the phase-centered `sampled_starts` population from Section 12.
 
 For the rendered x-axis:
 
@@ -296,17 +329,17 @@ For the rendered x-axis:
 x = arange(2 * spb) / spb
 ```
 
-Therefore x=1 UI corresponds to the sample at `center`, which is exactly the same resolved decision point used by phase-sensitive NRZ metrics.
+Therefore x=1 UI corresponds to trace sample index `spb`, which is exactly the same resolved decision point used by phase-sensitive NRZ metrics.
 
 The 2-UI eye is a display window around the decision point. It does not redefine the phase coordinate.
 
-## 14. DFE display relationship
+## 15. DFE display relationship
 
 The existing DFE display is a symbol-index scatter of corrected samples rather than a continuous 2-UI line eye.
 
 30B does not need to convert DFE display into a waveform eye. It must preserve that display model while ensuring those corrected samples originated from the same resolved NRZ phase.
 
-## 15. PAM4 relationship
+## 16. PAM4 relationship
 
 PAM4 shares the same exact phase representation:
 
@@ -329,7 +362,7 @@ Current PAM4 conceptual resolver remains:
 
 The exact PAM4 regression baseline must remain unchanged in 30B.
 
-## 16. Future NRZ auto-center contract
+## 17. Future NRZ auto-center contract
 
 This section freezes the future resolver semantics but does not authorize implementation in 30B.
 
@@ -344,6 +377,8 @@ Objective for candidate phase `p`:
 ```text
 score(p) = phase-aware NRZ eye_height at p
 ```
+
+The score uses the same warmup and `max_traces` trace-selection policy frozen in Section 12. A future resolver must not silently use a different sampling population from the phase-aware metric it is optimizing.
 
 Invalid/no-two-rail candidate:
 
@@ -366,15 +401,15 @@ spb // 2
 
 The future resolver must return the same exact integer phase representation and must not introduce interpolation under contract v1.
 
-## 17. Delayed waveform semantics
+## 18. Delayed waveform semantics
 
 For a no-delay waveform, an analytically known best sample phase may be used as a validation oracle.
 
-For a waveform delayed by a known integer sample offset, the phase-dependent opening must move accordingly within the modulo-one-symbol candidate domain.
+For a waveform delayed by a known integer sample offset, the phase-dependent opening must move accordingly within the one-symbol candidate domain `0 .. spb - 1`.
 
 The implementation must not automatically compensate the waveform before scoring. The observed shift in best phase is part of the validation evidence that the resolver is measuring the waveform it receives.
 
-## 18. Current baseline inconsistency to preserve as migration evidence
+## 19. Current baseline inconsistency to preserve as migration evidence
 
 Before 30B changes production behavior, tests must capture representative old behavior from baseline:
 
@@ -393,9 +428,11 @@ center_idx = seg_len // 2
 
 For `eye_ui == 2`, `center_idx == spb`, so the sampled center belongs to the next symbol's phase 0.
 
+The old NRZ metric also applies `max_traces` to the symbol-boundary trace population before calculating center statistics.
+
 This old reference frame is not retained as a public legacy mode. It must be documented as an intentionally replaced inconsistent baseline.
 
-## 19. Implementation 30B baseline migration requirements
+## 20. Implementation 30B baseline migration requirements
 
 30B is an explicit intentional baseline-change implementation, not a compatibility-preserving refactor.
 
@@ -408,13 +445,14 @@ It must:
 5. not hide expected changes by widening tolerances;
 6. preserve PAM4 numerical behavior;
 7. keep current GUI controls and layout unless a minimal eye-render alignment change is mechanically necessary;
-8. preserve public config names unless a separately approved contract requires otherwise.
+8. preserve public config names unless a separately approved contract requires otherwise;
+9. preserve the existing `max_traces` selection algorithm while applying it to the new phase-centered trace population.
 
-## 20. Required validation matrix for 30B
+## 21. Required validation matrix for 30B
 
 At minimum, production implementation tests must cover all of the following.
 
-### 20.1 Exact validation
+### 21.1 Exact validation
 
 - exact int `spb` accepted when positive;
 - bool `spb` rejected;
@@ -426,7 +464,7 @@ At minimum, production implementation tests must cover all of the following.
 - `phase == spb` rejected;
 - no clipping/wrapping.
 
-### 20.2 Known coordinate cases
+### 21.2 Known coordinate cases
 
 For small `spb`, use hardcoded arrays proving:
 
@@ -436,21 +474,30 @@ sample_position(n, p) = n * spb + p
 
 including boundary phases.
 
-### 20.3 Warmup
+### 21.3 Warmup
 
-Prove symbol indices 0..19 are excluded and index 20 is the first eligible phase sample.
+Prove symbol indices 0..19 are excluded and index 20 is the first eligible measured symbol.
 
-### 20.4 Ideal no-delay NRZ
+### 21.4 Trace selection / `max_traces`
+
+Use a hardcoded trace-count case proving:
+
+- candidate traces are phase-centered;
+- full 2-UI boundary filtering occurs before subsampling;
+- the existing linspace `max_traces` selection order is preserved;
+- metrics and rendering use the same selected trace centers.
+
+### 21.5 Ideal no-delay NRZ
 
 Use an ideal known waveform where expected phase-sensitive samples and eye opening are analytically obvious.
 
-### 20.5 Distinct-phase synthetic oracle
+### 21.6 Distinct-phase synthetic oracle
 
 Construct a waveform where one integer phase has a hardcoded larger two-rail opening than all others.
 
 This must be independent of the production phase resolver.
 
-### 20.6 Shared NRZ phase
+### 21.7 Shared NRZ phase
 
 Prove for one run that:
 
@@ -460,23 +507,23 @@ Prove for one run that:
 
 all correspond to the same configured phase coordinate.
 
-### 20.7 Eye rendering
+### 21.8 Eye rendering
 
-Prove the displayed 2-UI trace geometry places the resolved sample at x=1 UI.
+Prove the displayed 2-UI trace geometry places the resolved sample at x=1 UI and uses the same selected trace centers as metrics.
 
-### 20.8 Delay
+### 21.9 Delay
 
 Use a known integer-delayed synthetic waveform or project impulse/channel case to prove the phase-dependent best opening shifts without automatic compensation.
 
-### 20.9 Migration golden
+### 21.10 Migration golden
 
 Store representative old-baseline outputs from `6fa7ba4...` and the corresponding new outputs. Assertions must distinguish intentional change from unrelated regression.
 
-### 20.10 PAM4 regression
+### 21.11 PAM4 regression
 
 Existing PAM4 phase selection, tie behavior, hysteresis, score, and eye metrics remain unchanged.
 
-### 20.11 General regression
+### 21.12 General regression
 
 - full pre-30B test suite remains accounted for;
 - expected NRZ baseline assertions are deliberately updated, not deleted without replacement;
@@ -484,7 +531,7 @@ Existing PAM4 phase selection, tie behavior, hysteresis, score, and eye metrics 
 - GUI smoke passes;
 - module-boundary tests remain clean.
 
-## 21. Error/repair policy
+## 22. Error/repair policy
 
 Sampling-coordinate errors must fail explicitly.
 
@@ -495,9 +542,10 @@ Forbidden:
 - substituting `spb // 2` for an invalid explicitly supplied phase;
 - wrapping phase modulo `spb`;
 - silently shifting waveform alignment;
-- falling back from the new phase-sensitive metric to the old `seg_len // 2` reference frame.
+- falling back from the new phase-sensitive metric to the old `seg_len // 2` reference frame;
+- using a separate hidden metric sample population from the selected/rendered phase-centered traces.
 
-## 22. 30B implementation ownership and scope
+## 23. 30B implementation ownership and scope
 
 Production implementation owner: **Gemini**.
 
@@ -509,7 +557,7 @@ ChatGPT must not directly implement 30B production code except for an explicitly
 
 Exact 30B file boundary must be frozen in its implementation issue after contract review. It must not be guessed from this docs PR.
 
-## 23. Non-scope
+## 24. Non-scope
 
 Revision 1.0 / Implementation 30A does not implement:
 
@@ -526,7 +574,7 @@ Revision 1.0 / Implementation 30A does not implement:
 - Touchstone;
 - measurement waveform import.
 
-## 24. Exit gate
+## 25. Exit gate
 
 30A is complete only when:
 
