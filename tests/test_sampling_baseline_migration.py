@@ -179,24 +179,57 @@ def test_eye_rendering_alignment_harness():
 
 def test_old_baseline_executable_golden_evidence():
     """
-    Hardcode expected old pre-migration baseline oracle values as executable test evidence.
+    Reconstruct historical pre-30B.2 symbol-boundary NRZ metric algorithm on frozen synthetic wave
+    and prove it independently computes the frozen historical oracle values.
     """
-    old_starts = np.array([80, 84, 88, 92, 96, 100, 104, 108])
-    old_centers = np.array([-0.2, 0.2, -0.2, 0.2, -0.2, 0.2, -0.2, 0.2])
-    old_eye_height = 0.4
-    old_margin_5pct = 0.2
-    old_center_spread = 0.4
-    old_eye_max = 1.0
-    old_eye_min = -1.0
+    spb, symbols, wave = make_migration_synthetic_wave()
 
-    # Assert exact hardcoded oracle values
-    assert np.array_equal(old_starts, np.array([80, 84, 88, 92, 96, 100, 104, 108]))
-    assert np.array_equal(old_centers, np.array([-0.2, 0.2, -0.2, 0.2, -0.2, 0.2, -0.2, 0.2]))
-    assert old_eye_height == 0.4
-    assert old_margin_5pct == 0.2
-    assert old_center_spread == 0.4
-    assert old_eye_max == 1.0
-    assert old_eye_min == -1.0
+    # Test-local reconstruction of pre-migration algorithm (without calling new production helpers)
+    old_seg_len = 2 * spb
+    old_trace_starts = np.arange(
+        20 * spb,
+        len(wave) - old_seg_len,
+        spb,
+        dtype=int,
+    )
+    old_segs = np.array(
+        [wave[s:s + old_seg_len] for s in old_trace_starts],
+        dtype=float,
+    )
+
+    old_center_samples = old_segs[:, old_seg_len // 2]
+    old_eye_max = float(np.max(old_segs))
+    old_eye_min = float(np.min(old_segs))
+
+    upper = old_center_samples[old_center_samples >= 0]
+    lower = old_center_samples[old_center_samples < 0]
+
+    if upper.size > 0 and lower.size > 0:
+        old_eye_height = float(
+            np.percentile(upper, 5)
+            - np.percentile(lower, 95)
+        )
+    else:
+        old_eye_height = 0.0
+
+    old_margin_5pct = old_eye_height / 2.0
+    old_center_spread = float(
+        np.max(old_center_samples)
+        - np.min(old_center_samples)
+    )
+
+    # Verify historical algorithm + synthetic wave yields exact frozen pre-migration oracle
+    expected_old_starts = np.array([80, 84, 88, 92, 96, 100, 104, 108])
+    expected_old_centers = np.array([-0.2, 0.2, -0.2, 0.2, -0.2, 0.2, -0.2, 0.2])
+
+    np.testing.assert_array_equal(old_trace_starts, expected_old_starts)
+    np.testing.assert_allclose(old_center_samples, expected_old_centers, rtol=1e-7, atol=1e-7)
+
+    assert old_eye_height == pytest.approx(0.4)
+    assert old_margin_5pct == pytest.approx(0.2)
+    assert old_center_spread == pytest.approx(0.4)
+    assert old_eye_max == pytest.approx(1.0)
+    assert old_eye_min == pytest.approx(-1.0)
 
 
 def test_eye_rendering_delegation_spy(monkeypatch):
