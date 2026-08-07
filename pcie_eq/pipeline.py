@@ -15,6 +15,7 @@ from pcie_eq.metrics import (
     calculate_dfe_eye_metrics,
     calculate_pam4_eye_metrics,
 )
+from pcie_eq.sampling import validate_sampling_phase
 
 __all__ = [
     "run_nrz_simulation",
@@ -25,6 +26,8 @@ __all__ = [
 
 def run_nrz_simulation(config: NrzSimulationConfig) -> NrzSimulationResult:
     """Execute the full NRZ simulation pipeline."""
+    validate_sampling_phase(config.spb, config.sampling_phase)
+
     tx_symbols = tx_eq_levels(
         config.symbols, config.pre_db, config.de_db
     )
@@ -47,10 +50,18 @@ def run_nrz_simulation(config: NrzSimulationConfig) -> NrzSimulationResult:
     dfe_decisions = rx_results["dfe_decisions"]
 
     channel_eye_metrics = calculate_nrz_eye_metrics(
-        ch_wave, eye_ui=config.eye_ui, spb=config.spb, max_traces=config.max_traces
+        ch_wave,
+        eye_ui=config.eye_ui,
+        spb=config.spb,
+        max_traces=config.max_traces,
+        sampling_phase=config.sampling_phase,
     )
     ctle_eye_metrics = calculate_nrz_eye_metrics(
-        ctle_wave, eye_ui=config.eye_ui, spb=config.spb, max_traces=config.max_traces
+        ctle_wave,
+        eye_ui=config.eye_ui,
+        spb=config.spb,
+        max_traces=config.max_traces,
+        sampling_phase=config.sampling_phase,
     )
     dfe_eye_metrics = calculate_dfe_eye_metrics(
         dfe_corrected_samples, dfe_decisions, config.symbols, warmup_symbols=20

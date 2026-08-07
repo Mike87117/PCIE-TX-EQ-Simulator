@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from pcie_eq.sampling import select_phase_centered_trace_starts, validate_sampling_phase
+
 __all__ = [
     "calc_pam4_eye_openings_at_phase",
     "estimate_pam4_common_t_center_phase",
@@ -180,11 +182,18 @@ def calculate_dfe_eye_metrics(samples, decisions, reference, warmup_symbols=20):
     }
 
 
-def calculate_nrz_eye_metrics(wave, eye_ui=2, spb=32, max_traces=200):
-    seg_len = eye_ui * spb
-    start = 20 * spb
-    trace_starts = np.arange(start, len(wave) - seg_len, spb, dtype=int)
-    if trace_starts.size == 0:
+def calculate_nrz_eye_metrics(wave, eye_ui=2, spb=32, max_traces=200, sampling_phase=None):
+    if type(eye_ui) is not int:
+        raise TypeError(f"eye_ui must be exact int, got {type(eye_ui).__name__}")
+    if eye_ui != 2:
+        raise ValueError(f"eye_ui must be 2 under contract v1, got {eye_ui}")
+
+    validate_sampling_phase(spb, sampling_phase)
+
+    sampled_starts = select_phase_centered_trace_starts(
+        len(wave), spb, sampling_phase, max_traces, warmup_symbols=20
+    )
+    if sampled_starts.size == 0:
         return {
             "eye_height": 0.0,
             "margin_5pct": 0.0,
@@ -194,19 +203,12 @@ def calculate_nrz_eye_metrics(wave, eye_ui=2, spb=32, max_traces=200):
             "center_spread": 0.0,
         }
 
-    if trace_starts.size > max_traces:
-        idx = np.linspace(0, trace_starts.size - 1, max_traces, dtype=int)
-        sampled_starts = trace_starts[idx]
-    else:
-        sampled_starts = trace_starts
-
+    seg_len = 2 * spb
     segs = np.array([wave[s:s + seg_len] for s in sampled_starts], dtype=float)
     eye_max = float(np.max(segs))
     eye_min = float(np.min(segs))
-    eye_height = eye_max - eye_min
 
-    center_idx = seg_len // 2
-    center_samples = segs[:, center_idx]
+    center_samples = segs[:, spb]
     center_spread = float(np.max(center_samples) - np.min(center_samples))
     upper = center_samples[center_samples >= 0]
     lower = center_samples[center_samples < 0]
@@ -225,10 +227,10 @@ def calculate_nrz_eye_metrics(wave, eye_ui=2, spb=32, max_traces=200):
     }
 
 
-def calculate_eye_metrics(wave, rx_results=None, is_dfe=False, reference_symbols=None, max_traces=200, eye_ui=2, spb=32):
+def calculate_eye_metrics(wave, rx_results=None, is_dfe=False, reference_symbols=None, max_traces=200, eye_ui=2, spb=32, sampling_phase=None):
     if is_dfe and rx_results is not None:
         samples = rx_results.get("dfe_corrected_samples", np.array([]))
         decisions = rx_results.get("dfe_decisions", np.array([]))
         reference = reference_symbols if reference_symbols is not None else np.array([])
         return calculate_dfe_eye_metrics(samples, decisions, reference)
-    return calculate_nrz_eye_metrics(wave, eye_ui=eye_ui, spb=spb, max_traces=max_traces)
+    return calculate_nrz_eye_metrics(wave, eye_ui=eye_ui, spb=spb, max_traces=max_traces, sampling_phase=sampling_phase)

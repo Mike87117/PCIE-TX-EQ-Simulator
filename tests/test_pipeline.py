@@ -75,10 +75,18 @@ def test_run_nrz_simulation_item_by_item_contract():
         sampling_phase=config.sampling_phase,
     )
     expected_channel_metrics = calculate_nrz_eye_metrics(
-        expected_ch_wave, eye_ui=config.eye_ui, spb=config.spb, max_traces=config.max_traces
+        expected_ch_wave,
+        eye_ui=config.eye_ui,
+        spb=config.spb,
+        max_traces=config.max_traces,
+        sampling_phase=config.sampling_phase,
     )
     expected_ctle_metrics = calculate_nrz_eye_metrics(
-        expected_rx["ctle_wave"], eye_ui=config.eye_ui, spb=config.spb, max_traces=config.max_traces
+        expected_rx["ctle_wave"],
+        eye_ui=config.eye_ui,
+        spb=config.spb,
+        max_traces=config.max_traces,
+        sampling_phase=config.sampling_phase,
     )
     expected_dfe_metrics = calculate_dfe_eye_metrics(
         expected_rx["dfe_corrected_samples"], expected_rx["dfe_decisions"], config.symbols, warmup_symbols=20

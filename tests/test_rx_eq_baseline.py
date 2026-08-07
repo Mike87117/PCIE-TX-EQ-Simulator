@@ -194,3 +194,18 @@ def test_rx_eq_identity_and_edge_cases():
     _, _, decisions = apply_dfe(np.array([0.0]), taps=[0.0], spb=1, sampling_phase=0)
     assert decisions[0] == 1.0
 
+
+def test_apply_dfe_invalid_sampling_phase_rejection():
+    """
+    Verify apply_dfe fails closed with TypeError / ValueError on invalid sampling_phase.
+    """
+    ctle_wave = np.array([1.0, 0.5, -0.5, -1.0], dtype=float)
+    with pytest.raises(ValueError, match="phase must satisfy"):
+        apply_dfe(ctle_wave, taps=[0.0], spb=4, sampling_phase=-1)
+    with pytest.raises(ValueError, match="phase must satisfy"):
+        apply_dfe(ctle_wave, taps=[0.0], spb=4, sampling_phase=4)
+    with pytest.raises(TypeError, match="phase must be exact int"):
+        apply_dfe(ctle_wave, taps=[0.0], spb=4, sampling_phase=True)
+    with pytest.raises(TypeError, match="phase must be exact int"):
+        apply_dfe(ctle_wave, taps=[0.0], spb=4, sampling_phase=2.0)
+
