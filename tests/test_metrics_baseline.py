@@ -339,7 +339,7 @@ def test_main_adapter_integration():
     wave = np.repeat(symbols, SPB)
 
     harness = DummyMetricsHarness(symbols=symbols, rx_view_mode="Waveform")
-    harness.update_eye_metrics(wave)
+    harness.update_eye_metrics(wave, sampling_phase=SPB // 2)
 
     assert "eye_height" in harness.eye_metrics
     assert harness.eye_metrics["eye_height"] == 2.0

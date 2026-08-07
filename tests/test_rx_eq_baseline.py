@@ -209,3 +209,18 @@ def test_apply_dfe_invalid_sampling_phase_rejection():
     with pytest.raises(TypeError, match="phase must be exact int"):
         apply_dfe(ctle_wave, taps=[0.0], spb=4, sampling_phase=2.0)
 
+
+def test_run_rx_pipeline_invalid_sampling_phase_rejection():
+    """
+    Verify run_rx_pipeline fails closed with TypeError / ValueError on invalid sampling_phase.
+    """
+    ch_wave = np.array([1.0, 0.5, -0.5, -1.0], dtype=float)
+    with pytest.raises(ValueError, match="phase must satisfy"):
+        run_rx_pipeline(ch_wave, ctle_gain=1.0, ctle_alpha=0.08, dfe_taps=[0.0], spb=4, sampling_phase=-1)
+    with pytest.raises(ValueError, match="phase must satisfy"):
+        run_rx_pipeline(ch_wave, ctle_gain=1.0, ctle_alpha=0.08, dfe_taps=[0.0], spb=4, sampling_phase=4)
+    with pytest.raises(TypeError, match="phase must be exact int"):
+        run_rx_pipeline(ch_wave, ctle_gain=1.0, ctle_alpha=0.08, dfe_taps=[0.0], spb=4, sampling_phase=True)
+    with pytest.raises(TypeError, match="phase must be exact int"):
+        run_rx_pipeline(ch_wave, ctle_gain=1.0, ctle_alpha=0.08, dfe_taps=[0.0], spb=4, sampling_phase=2.0)
+

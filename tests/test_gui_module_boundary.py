@@ -79,11 +79,12 @@ def test_update_waveform_yrange_contract(qapp):
 
 
 def test_update_eye_line_nan_separation_and_warmup(qapp):
-    """Verify update_eye_line uses single curve with NaN separation and 20-symbol warmup skip."""
+    """Verify update_eye_line uses single curve with NaN separation and phase-centered 2-UI warmup alignment."""
     win = CorePCIeTxEqSimulator()
     try:
         wave = np.tile(np.linspace(0.0, 1.0, CoreSPB * 2), 50)
-        win.update_eye_line(wave, max_traces=10)
+        sampling_phase = CoreSPB // 2
+        win.update_eye_line(wave, sampling_phase, max_traces=10)
 
         x_data, y_data = win.eye_curve.getData()
         assert x_data is not None and len(x_data) > 0
@@ -93,9 +94,13 @@ def test_update_eye_line_nan_separation_and_warmup(qapp):
         assert np.isnan(x_data).sum() > 0
         assert np.isnan(y_data).sum() > 0
 
-        # Verify first trace data starts after 20 symbols warmup
-        start_20 = 20 * CoreSPB
-        assert y_data[0] == pytest.approx(wave[start_20])
+        # Verify first trace data starts at phase-centered coordinate
+        first_start = 20 * CoreSPB + sampling_phase - CoreSPB
+        assert y_data[0] == pytest.approx(wave[first_start])
+
+        # Verify x=1.0 UI corresponds to index CoreSPB and decision sample
+        assert x_data[CoreSPB] == pytest.approx(1.0)
+        assert y_data[CoreSPB] == pytest.approx(wave[20 * CoreSPB + sampling_phase])
     finally:
         win.close()
 
@@ -121,3 +126,18 @@ def test_update_dfe_sample_plot_zero_line_and_scatter(qapp):
         assert y_vals[0] == pytest.approx(rx_results["dfe_corrected_samples"][20])
     finally:
         win.close()
+
+
+def test_nrz_controller_no_hidden_sampling_phase_defaults():
+    """
+    Verify update_eye, update_eye_line, and update_eye_metrics have no default value for sampling_phase.
+    """
+    import inspect
+    from pcie_eq.gui.nrz_controller import NrzControllerMixin
+
+    for method_name in ("update_eye", "update_eye_line", "update_eye_metrics"):
+        method = getattr(NrzControllerMixin, method_name)
+        sig = inspect.signature(method)
+        assert "sampling_phase" in sig.parameters, f"Method '{method_name}' missing parameter 'sampling_phase'"
+        param = sig.parameters["sampling_phase"]
+        assert param.default is inspect.Parameter.empty, f"Method '{method_name}' parameter 'sampling_phase' must not have default value"

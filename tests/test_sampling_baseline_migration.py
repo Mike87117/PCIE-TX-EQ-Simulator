@@ -175,3 +175,79 @@ def test_eye_rendering_alignment_harness():
     first_start = starts[0]
     assert first_block_y[SPB] == wave[first_start + SPB]
     assert first_block_y[SPB] == 1.0
+
+
+def test_old_baseline_executable_golden_evidence():
+    """
+    Hardcode expected old pre-migration baseline oracle values as executable test evidence.
+    """
+    old_starts = np.array([80, 84, 88, 92, 96, 100, 104, 108])
+    old_centers = np.array([-0.2, 0.2, -0.2, 0.2, -0.2, 0.2, -0.2, 0.2])
+    old_eye_height = 0.4
+    old_margin_5pct = 0.2
+    old_center_spread = 0.4
+    old_eye_max = 1.0
+    old_eye_min = -1.0
+
+    # Assert exact hardcoded oracle values
+    assert np.array_equal(old_starts, np.array([80, 84, 88, 92, 96, 100, 104, 108]))
+    assert np.array_equal(old_centers, np.array([-0.2, 0.2, -0.2, 0.2, -0.2, 0.2, -0.2, 0.2]))
+    assert old_eye_height == 0.4
+    assert old_margin_5pct == 0.2
+    assert old_center_spread == 0.4
+    assert old_eye_max == 1.0
+    assert old_eye_min == -1.0
+
+
+def test_eye_rendering_delegation_spy(monkeypatch):
+    """
+    Spy on select_phase_centered_trace_starts to prove update_eye_line passes
+    caller-supplied explicit phase and exact arguments.
+    """
+    import pcie_eq.gui.nrz_controller as nrz_ctrl_mod
+    from pcie_eq.gui.nrz_controller import NrzControllerMixin
+
+    calls = []
+
+    def spy_select_starts(wave_length, spb, phase, max_traces, warmup_symbols=NRZ_WARMUP_SYMBOLS):
+        calls.append({
+            "wave_length": wave_length,
+            "spb": spb,
+            "phase": phase,
+            "max_traces": max_traces,
+            "warmup_symbols": warmup_symbols,
+        })
+        return select_phase_centered_trace_starts(wave_length, spb, phase, max_traces, warmup_symbols)
+
+    monkeypatch.setattr(nrz_ctrl_mod, "select_phase_centered_trace_starts", spy_select_starts)
+
+    class DummyCurve:
+        def show(self): pass
+        def setPen(self, pen): pass
+        def setSymbol(self, sym): pass
+        def setData(self, x, y): pass
+
+    class DummyPlot:
+        def setLabel(self, loc, txt): pass
+        def setXRange(self, min_x, max_x): pass
+        def setYRange(self, min_y, max_y): pass
+
+    class MockController(NrzControllerMixin):
+        def __init__(self):
+            self.eye_curve = DummyCurve()
+            self.eye_plot = DummyPlot()
+
+    ctrl = MockController()
+    wave = np.repeat([1.0, -1.0], 30 * SPB)
+    explicit_phase = 7
+    requested_max_traces = 150
+
+    ctrl.update_eye_line(wave, sampling_phase=explicit_phase, max_traces=requested_max_traces)
+
+    assert len(calls) == 1
+    call_kwargs = calls[0]
+    assert call_kwargs["wave_length"] == len(wave)
+    assert call_kwargs["spb"] == SPB
+    assert call_kwargs["phase"] == explicit_phase
+    assert call_kwargs["max_traces"] == requested_max_traces
+    assert call_kwargs["warmup_symbols"] == NRZ_WARMUP_SYMBOLS

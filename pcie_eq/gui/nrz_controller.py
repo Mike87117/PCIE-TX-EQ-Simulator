@@ -500,11 +500,11 @@ class NrzControllerMixin:
         ymax *= 1.1
         self.wave_plot.setYRange(-ymax, ymax)
 
-    def update_eye(self, wave, sampling_phase=SPB // 2, max_traces=MAX_EYE_TRACES):
+    def update_eye(self, wave, sampling_phase, max_traces=MAX_EYE_TRACES):
         # Density eye is not implemented; always render the line eye diagram.
-        self.update_eye_line(wave, sampling_phase=sampling_phase, max_traces=max_traces)
+        self.update_eye_line(wave, sampling_phase, max_traces=max_traces)
 
-    def update_eye_line(self, wave, sampling_phase=SPB // 2, max_traces=MAX_EYE_TRACES):
+    def update_eye_line(self, wave, sampling_phase, max_traces=MAX_EYE_TRACES):
         self.eye_curve.show()
         self.eye_plot.setLabel("bottom", "UI")
         self.eye_plot.setLabel("left", "Voltage")
@@ -522,7 +522,7 @@ class NrzControllerMixin:
             self.eye_plot.setYRange(-1.3, 1.3)
             return
 
-        seg_len = EYE_UI * SPB
+        seg_len = 2 * SPB
         x = np.arange(seg_len, dtype=float) / SPB
         x_block = np.concatenate([x, [np.nan]])
         x_all = np.tile(x_block, sampled_starts.size)
@@ -578,7 +578,7 @@ class NrzControllerMixin:
         ymax = max(1.3, float(np.max(np.abs(samples)))) * 1.1
         self.eye_plot.setYRange(-ymax, ymax)
 
-    def update_eye_metrics(self, wave, rx_results=None, max_traces=MAX_EYE_TRACES, sampling_phase=SPB // 2):
+    def update_eye_metrics(self, wave, sampling_phase, rx_results=None, max_traces=MAX_EYE_TRACES):
         is_dfe = rx_results is not None and "DFE" in self.rx_view_mode
         self.eye_metrics = calculate_eye_metrics(
             wave,

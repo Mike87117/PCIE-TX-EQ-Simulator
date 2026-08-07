@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from pcie_eq.sampling import select_phase_centered_trace_starts, validate_sampling_phase
+from pcie_eq.sampling import select_phase_centered_trace_starts, NRZ_WARMUP_SYMBOLS
 
 __all__ = [
     "calc_pam4_eye_openings_at_phase",
@@ -188,10 +188,8 @@ def calculate_nrz_eye_metrics(wave, eye_ui=2, spb=32, max_traces=200, sampling_p
     if eye_ui != 2:
         raise ValueError(f"eye_ui must be 2 under contract v1, got {eye_ui}")
 
-    validate_sampling_phase(spb, sampling_phase)
-
     sampled_starts = select_phase_centered_trace_starts(
-        len(wave), spb, sampling_phase, max_traces, warmup_symbols=20
+        len(wave), spb, sampling_phase, max_traces, warmup_symbols=NRZ_WARMUP_SYMBOLS
     )
     if sampled_starts.size == 0:
         return {
