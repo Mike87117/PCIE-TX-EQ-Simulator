@@ -103,7 +103,7 @@ def test_rx_eq_only_allowed_imports():
             if node.module:
                 imported_modules.add(node.module)
 
-    allowed_exact = {"numpy", "pcie_eq.channel"}
+    allowed_exact = {"numpy", "pcie_eq.channel", "pcie_eq.sampling"}
     disallowed = set()
 
     for mod_name in imported_modules:

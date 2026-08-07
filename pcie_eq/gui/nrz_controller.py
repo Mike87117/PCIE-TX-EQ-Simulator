@@ -17,6 +17,7 @@ from pcie_eq.tx_eq import (
 )
 from pcie_eq.metrics import calculate_eye_metrics
 from pcie_eq.models import NrzSimulationConfig
+from pcie_eq.sampling import select_phase_centered_trace_starts, NRZ_WARMUP_SYMBOLS
 from pcie_eq.pipeline import run_simulation
 from pcie_eq.patterns import generate_random_nrz_bits
 from pcie_eq.gui.constants import (
@@ -425,10 +426,10 @@ class NrzControllerMixin:
                 self.update_dfe_sample_plot(rx_results, max_symbols=REALTIME_EYE_TRACES)
                 self.eye_metrics = res.dfe_eye_metrics
             elif "CTLE" in self.rx_view_mode:
-                self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
+                self.update_eye(rx_wave, sampling_phase=config.sampling_phase, max_traces=REALTIME_EYE_TRACES)
                 self.eye_metrics = res.ctle_eye_metrics
             else:
-                self.update_eye(rx_wave, max_traces=REALTIME_EYE_TRACES)
+                self.update_eye(rx_wave, sampling_phase=config.sampling_phase, max_traces=REALTIME_EYE_TRACES)
                 self.eye_metrics = res.channel_eye_metrics
             self.update_info()
 
@@ -461,10 +462,10 @@ class NrzControllerMixin:
             self.update_dfe_sample_plot(rx_results, max_symbols=MAX_EYE_TRACES)
             self.eye_metrics = res.dfe_eye_metrics
         elif "CTLE" in self.rx_view_mode:
-            self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
+            self.update_eye(rx_wave, sampling_phase=config.sampling_phase, max_traces=MAX_EYE_TRACES)
             self.eye_metrics = res.ctle_eye_metrics
         else:
-            self.update_eye(rx_wave, max_traces=MAX_EYE_TRACES)
+            self.update_eye(rx_wave, sampling_phase=config.sampling_phase, max_traces=MAX_EYE_TRACES)
             self.eye_metrics = res.channel_eye_metrics
         self.update_info()
 
@@ -499,11 +500,11 @@ class NrzControllerMixin:
         ymax *= 1.1
         self.wave_plot.setYRange(-ymax, ymax)
 
-    def update_eye(self, wave, max_traces=MAX_EYE_TRACES):
+    def update_eye(self, wave, sampling_phase, max_traces=MAX_EYE_TRACES):
         # Density eye is not implemented; always render the line eye diagram.
-        self.update_eye_line(wave, max_traces)
+        self.update_eye_line(wave, sampling_phase, max_traces=max_traces)
 
-    def update_eye_line(self, wave, max_traces=MAX_EYE_TRACES):
+    def update_eye_line(self, wave, sampling_phase, max_traces=MAX_EYE_TRACES):
         self.eye_curve.show()
         self.eye_plot.setLabel("bottom", "UI")
         self.eye_plot.setLabel("left", "Voltage")
@@ -512,21 +513,16 @@ class NrzControllerMixin:
         self.eye_curve.setPen(pg.mkPen((50, 150, 255, 100)))
         self.eye_curve.setSymbol(None)
 
-        seg_len = EYE_UI * SPB
-        start = 20 * SPB
-        trace_starts = np.arange(start, len(wave) - seg_len, SPB, dtype=int)
-        if trace_starts.size == 0:
+        sampled_starts = select_phase_centered_trace_starts(
+            len(wave), SPB, sampling_phase, max_traces, NRZ_WARMUP_SYMBOLS
+        )
+        if sampled_starts.size == 0:
             self.eye_curve.setData([], [])
             self.eye_plot.setXRange(0, EYE_UI)
             self.eye_plot.setYRange(-1.3, 1.3)
             return
 
-        if trace_starts.size > max_traces:
-            idx = np.linspace(0, trace_starts.size - 1, max_traces, dtype=int)
-            sampled_starts = trace_starts[idx]
-        else:
-            sampled_starts = trace_starts
-
+        seg_len = 2 * SPB
         x = np.arange(seg_len, dtype=float) / SPB
         x_block = np.concatenate([x, [np.nan]])
         x_all = np.tile(x_block, sampled_starts.size)
@@ -582,7 +578,7 @@ class NrzControllerMixin:
         ymax = max(1.3, float(np.max(np.abs(samples)))) * 1.1
         self.eye_plot.setYRange(-ymax, ymax)
 
-    def update_eye_metrics(self, wave, rx_results=None, max_traces=MAX_EYE_TRACES):
+    def update_eye_metrics(self, wave, sampling_phase, rx_results=None, max_traces=MAX_EYE_TRACES):
         is_dfe = rx_results is not None and "DFE" in self.rx_view_mode
         self.eye_metrics = calculate_eye_metrics(
             wave,
@@ -592,6 +588,7 @@ class NrzControllerMixin:
             max_traces=max_traces,
             eye_ui=EYE_UI,
             spb=SPB,
+            sampling_phase=sampling_phase,
         )
 
     def update_info(self):

@@ -112,7 +112,7 @@ def test_metrics_only_allowed_imports():
             if node.module:
                 imported_modules.add(node.module)
 
-    allowed_exact = {"numpy"}
+    allowed_exact = {"numpy", "pcie_eq.sampling"}
     disallowed = set()
 
     for mod_name in imported_modules:

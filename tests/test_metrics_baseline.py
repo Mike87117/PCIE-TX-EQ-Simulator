@@ -58,7 +58,7 @@ def test_nrz_eye_metrics_normal():
     symbols = np.tile([1.0, -1.0], 50)
     wave = np.repeat(symbols, SPB)
 
-    metrics = calculate_nrz_eye_metrics(wave, eye_ui=2, spb=SPB)
+    metrics = calculate_nrz_eye_metrics(wave, eye_ui=2, spb=SPB, sampling_phase=16)
 
     assert metrics["eye_max"] == 1.0
     assert metrics["eye_min"] == -1.0
@@ -69,7 +69,7 @@ def test_nrz_eye_metrics_normal():
 
     # Also verify calculate_eye_metrics dispatcher
     dispatch_metrics = calculate_eye_metrics(
-        wave, is_dfe=False, reference_symbols=symbols, spb=SPB
+        wave, is_dfe=False, reference_symbols=symbols, spb=SPB, sampling_phase=16
     )
     assert dispatch_metrics == metrics
 
@@ -79,7 +79,7 @@ def test_nrz_eye_metrics_insufficient_traces_fallback():
     Directly verify calculate_nrz_eye_metrics returns all zeros when waveform is too short.
     """
     short_wave = np.repeat([1.0, -1.0], 5)  # 10 * SPB = 320 samples < 20 * SPB
-    metrics = calculate_nrz_eye_metrics(short_wave, eye_ui=2, spb=SPB)
+    metrics = calculate_nrz_eye_metrics(short_wave, eye_ui=2, spb=SPB, sampling_phase=16)
 
     expected_fallback = {
         "eye_height": 0.0,
@@ -99,7 +99,7 @@ def test_nrz_eye_metrics_single_rail_zero_height():
     symbols = np.ones(100)
     wave = np.repeat(symbols, SPB)
 
-    metrics = calculate_nrz_eye_metrics(wave, eye_ui=2, spb=SPB)
+    metrics = calculate_nrz_eye_metrics(wave, eye_ui=2, spb=SPB, sampling_phase=16)
 
     assert metrics["eye_height"] == 0.0
     assert metrics["margin_5pct"] == 0.0
@@ -339,7 +339,7 @@ def test_main_adapter_integration():
     wave = np.repeat(symbols, SPB)
 
     harness = DummyMetricsHarness(symbols=symbols, rx_view_mode="Waveform")
-    harness.update_eye_metrics(wave)
+    harness.update_eye_metrics(wave, sampling_phase=SPB // 2)
 
     assert "eye_height" in harness.eye_metrics
     assert harness.eye_metrics["eye_height"] == 2.0

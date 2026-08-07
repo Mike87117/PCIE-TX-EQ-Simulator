@@ -75,10 +75,18 @@ def test_run_nrz_simulation_item_by_item_contract():
         sampling_phase=config.sampling_phase,
     )
     expected_channel_metrics = calculate_nrz_eye_metrics(
-        expected_ch_wave, eye_ui=config.eye_ui, spb=config.spb, max_traces=config.max_traces
+        expected_ch_wave,
+        eye_ui=config.eye_ui,
+        spb=config.spb,
+        max_traces=config.max_traces,
+        sampling_phase=config.sampling_phase,
     )
     expected_ctle_metrics = calculate_nrz_eye_metrics(
-        expected_rx["ctle_wave"], eye_ui=config.eye_ui, spb=config.spb, max_traces=config.max_traces
+        expected_rx["ctle_wave"],
+        eye_ui=config.eye_ui,
+        spb=config.spb,
+        max_traces=config.max_traces,
+        sampling_phase=config.sampling_phase,
     )
     expected_dfe_metrics = calculate_dfe_eye_metrics(
         expected_rx["dfe_corrected_samples"], expected_rx["dfe_decisions"], config.symbols, warmup_symbols=20
@@ -314,3 +322,67 @@ def test_run_simulation_empty_does_not_disturb_global_rng():
         assert before[4] == after[4]
     finally:
         np.random.set_state(before)
+
+
+def test_nrz_pipeline_same_phase_forwarding_spy(monkeypatch):
+    """
+    Spy on run_rx_pipeline and calculate_nrz_eye_metrics to prove exact same
+    config.sampling_phase is forwarded to RX, Channel metrics, and CTLE metrics.
+    """
+    rx_spy_phases = []
+    metric_spy_phases = []
+
+    orig_run_rx = pipeline_module.run_rx_pipeline
+    orig_calc_metrics = pipeline_module.calculate_nrz_eye_metrics
+
+    def spy_run_rx(ch_wave, ctle_gain, ctle_alpha, dfe_taps, spb, sampling_phase):
+        rx_spy_phases.append(sampling_phase)
+        return orig_run_rx(ch_wave, ctle_gain, ctle_alpha, dfe_taps, spb, sampling_phase)
+
+    def spy_calc_metrics(wave, eye_ui=2, spb=32, max_traces=200, sampling_phase=None):
+        metric_spy_phases.append(sampling_phase)
+        return orig_calc_metrics(wave, eye_ui=eye_ui, spb=spb, max_traces=max_traces, sampling_phase=sampling_phase)
+
+    monkeypatch.setattr(pipeline_module, "run_rx_pipeline", spy_run_rx)
+    monkeypatch.setattr(pipeline_module, "calculate_nrz_eye_metrics", spy_calc_metrics)
+
+    sentinel_phase = 7
+    config = NrzSimulationConfig(
+        symbols=np.tile([1.0, -1.0], 25),
+        spb=32,
+        sampling_phase=sentinel_phase,
+    )
+
+    result = run_nrz_simulation(config)
+    assert isinstance(result, NrzSimulationResult)
+
+    assert len(rx_spy_phases) == 1
+    assert rx_spy_phases[0] == sentinel_phase
+
+    assert len(metric_spy_phases) == 2
+    assert metric_spy_phases[0] == sentinel_phase  # Channel metrics
+    assert metric_spy_phases[1] == sentinel_phase  # CTLE metrics
+
+
+def test_nrz_pipeline_invalid_config_phase_fails_closed(monkeypatch):
+    """
+    Verify run_nrz_simulation fails closed before executing TX/channel/RX if config.sampling_phase is invalid.
+    """
+    tx_executed = []
+
+    def spy_tx_eq_levels(*args, **kwargs):
+        tx_executed.append(True)
+        return tx_eq_levels(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "tx_eq_levels", spy_tx_eq_levels)
+
+    bad_config = NrzSimulationConfig(
+        symbols=np.tile([1.0, -1.0], 10),
+        spb=32,
+        sampling_phase=-1,
+    )
+
+    with pytest.raises(ValueError, match="phase must satisfy"):
+        run_nrz_simulation(bad_config)
+
+    assert not tx_executed, "Pipeline must fail closed before TX symbol generation"

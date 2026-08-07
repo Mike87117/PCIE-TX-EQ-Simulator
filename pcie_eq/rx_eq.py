@@ -3,6 +3,7 @@
 import numpy as np
 
 from pcie_eq.channel import simple_channel
+from pcie_eq.sampling import symbol_sample_index, validate_sampling_phase
 
 __all__ = [
     "apply_ctle",
@@ -44,10 +45,12 @@ def apply_dfe(ctle_wave, taps, spb, sampling_phase):
     NOTE: DFE operates at symbol rate on sampling points. It does not
     generate a real analog waveform.
     """
+    validate_sampling_phase(spb, sampling_phase)
+
     num_symbols = len(ctle_wave) // spb
     samples = np.zeros(num_symbols)
     for i in range(num_symbols):
-        idx = i * spb + sampling_phase
+        idx = symbol_sample_index(i, spb, sampling_phase)
         if idx < len(ctle_wave):
             samples[i] = ctle_wave[idx]
         else:
