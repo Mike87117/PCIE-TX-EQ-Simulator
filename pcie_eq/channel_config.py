@@ -20,7 +20,6 @@ from pcie_eq.impulse_source import (
     ImpulseSourceConfig,
     ImpulseSourceResult,
     build_impulse,
-    _validate_canonical_config as _validate_canonical_source_config,
 )
 
 CHANNEL_CONFIG_CONTRACT_ID = "pcie_eq-channel-config-v2"
@@ -100,8 +99,21 @@ class ChannelConfig:
                     f"impulse_source must be exactly ImpulseSourceConfig, got {type(self.impulse_source).__name__}"
                 )
 
-            # Defensively re-validate nested frozen source config without repair
-            _validate_canonical_source_config(self.impulse_source)
+            # Defensively re-validate nested frozen source config via public API without repair
+            try:
+                ImpulseSourceConfig(
+                    schema_version=self.impulse_source.schema_version,
+                    source_type=self.impulse_source.source_type,
+                    sample_interval=self.impulse_source.sample_interval,
+                    impulse_zero_index=self.impulse_source.impulse_zero_index,
+                    normalization=self.impulse_source.normalization,
+                    length=self.impulse_source.length,
+                    amplitude=self.impulse_source.amplitude,
+                    decay_ratio=self.impulse_source.decay_ratio,
+                    values=self.impulse_source.values,
+                )
+            except (TypeError, ValueError) as exc:
+                raise exc
 
             # Integration v1 requires sample_interval == 1.0
             if self.impulse_source.sample_interval != 1.0:
@@ -226,13 +238,33 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
         model_level = "project_owned_discrete_impulse_channel"
 
         # Step 8: Call build_impulse exactly once
-        source_result = build_impulse(config.impulse_source)
+        try:
+            source_result = build_impulse(config.impulse_source)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"build_impulse failed: {exc}") from exc
 
-        # Step 9: Validate exact ImpulseSourceResult child boundary
+        # Step 9: Validate exact ImpulseSourceResult child boundary (raise RuntimeError on ANY violation)
         if type(source_result) is not ImpulseSourceResult:
-            raise RuntimeError(f"source result is not ImpulseSourceResult: {type(source_result)}")
+            raise RuntimeError(f"source result is not exact ImpulseSourceResult: {type(source_result)}")
         if type(source_result.resolved_config) is not ImpulseSourceConfig:
-            raise RuntimeError(f"source resolved_config is not ImpulseSourceConfig: {type(source_result.resolved_config)}")
+            raise RuntimeError(f"source resolved_config is not exact ImpulseSourceConfig: {type(source_result.resolved_config)}")
+
+        # Defensively validate source resolved_config semantics via public API constructor
+        try:
+            ImpulseSourceConfig(
+                schema_version=source_result.resolved_config.schema_version,
+                source_type=source_result.resolved_config.source_type,
+                sample_interval=source_result.resolved_config.sample_interval,
+                impulse_zero_index=source_result.resolved_config.impulse_zero_index,
+                normalization=source_result.resolved_config.normalization,
+                length=source_result.resolved_config.length,
+                amplitude=source_result.resolved_config.amplitude,
+                decay_ratio=source_result.resolved_config.decay_ratio,
+                values=source_result.resolved_config.values,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"source resolved_config semantics invalid: {exc}") from exc
+
         if source_result.model_level != "project_owned_discrete_impulse_source":
             raise RuntimeError(f"source model_level mismatch: got '{source_result.model_level}'")
         if type(source_result.values) is not np.ndarray:
@@ -252,7 +284,11 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
         if source_result.resolved_config.source_type in ("single_tap", "exponential_postcursor"):
             expected_src_len = source_result.resolved_config.length
         elif source_result.resolved_config.source_type == "user_defined":
+            if source_result.resolved_config.values is None:
+                raise RuntimeError("user_defined source resolved_config values is None")
             expected_src_len = len(source_result.resolved_config.values)
+        else:
+            raise RuntimeError(f"Unsupported source_type in source resolved_config: '{source_result.resolved_config.source_type}'")
 
         if source_result.values.shape != (expected_src_len,):
             raise RuntimeError(f"source values shape mismatch: got {source_result.values.shape}, expected ({expected_src_len},)")
@@ -266,13 +302,16 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
         )
 
         # Step 11: Call convolve_impulse exactly once
-        conv_result = convolve_impulse(wave, source_result.values, conv_config)
+        try:
+            conv_result = convolve_impulse(wave, source_result.values, conv_config)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"convolve_impulse failed: {exc}") from exc
 
-        # Step 12: Validate exact ImpulseConvolutionResult child boundary
+        # Step 12: Validate exact ImpulseConvolutionResult child boundary (raise RuntimeError on ANY violation)
         if type(conv_result) is not ImpulseConvolutionResult:
-            raise RuntimeError(f"convolution result is not ImpulseConvolutionResult: {type(conv_result)}")
+            raise RuntimeError(f"convolution result is not exact ImpulseConvolutionResult: {type(conv_result)}")
         if type(conv_result.resolved_config) is not ImpulseConvolutionConfig:
-            raise RuntimeError(f"convolution resolved_config is not ImpulseConvolutionConfig: {type(conv_result.resolved_config)}")
+            raise RuntimeError(f"convolution resolved_config is not exact ImpulseConvolutionConfig: {type(conv_result.resolved_config)}")
         if conv_result.resolved_config.mode != "same":
             raise RuntimeError(f"convolution mode mismatch: got '{conv_result.resolved_config.mode}'")
         if conv_result.resolved_config.impulse_zero_index != resolved_source.impulse_zero_index:

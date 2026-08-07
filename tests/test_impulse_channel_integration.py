@@ -2,17 +2,19 @@
 Unit tests for Impulse Channel Integration v1 in pcie_eq.channel_config.
 
 Verifies:
-1. Canonical Golden Cases: Delta identity, Exponential postcursor, User-defined non-centered zero index, All-zero impulse, Empty wave.
+1. Canonical Golden Cases: Delta identity, Exponential postcursor, User-defined non-centered zero index, Negative source amplitude, All-zero impulse, Empty wave.
 2. Wave Input Matrix: bool, int, uint, float16/32/64, list, tuple, non-contiguous view -> all yield exact float64 impulse-channel output.
 3. Relevance and Nested Config Validation: schema v1 rejection of impulse_response, non-None alpha rejection, missing/wrong impulse_source rejection, explosive wave validation order.
 4. Integration Sample Interval Policy: sample_interval == 1.0 accepted, 0.5/2.0/1.0000001 rejected with ValueError before wave materialization.
 5. Ownership & Result Contract: same-length float64 output, non-aliasing, new array/resolved config allocation per call, result mutation isolation.
-6. Child Result Boundary Failure Matrix via Monkeypatch: build_impulse or convolve_impulse returning wrong type, subclass, wrong metadata, wrong dtype, wrong shape, non-contiguous, non-finite, or aliased memory all raise RuntimeError without repair.
-7. Serialization: v2 canonical 4-key dictionary, nested source serialization, new allocations per call, and round-trip consistency.
+6. Delegation Tracking: build_impulse() called exactly once and convolve_impulse() called exactly once for non-empty and empty waves with exact derived ImpulseConvolutionConfig.
+7. Complete Child Result Boundary Failure Matrix via Monkeypatch: build_impulse or convolve_impulse returning wrong type, subclass, corrupted resolved config, wrong metadata, wrong dtype, wrong shape, non-contiguous, non-finite, or aliased memory (source/wave) all raise RuntimeError without repair.
+8. Serialization: v2 canonical 4-key dictionary, nested source serialization, new allocations per call, caller dict/list mutation isolation after from_dict(), and round-trip consistency.
+9. No direct numpy.convolve() / No duplicated impulse formula AST boundary check.
 """
 
-from dataclasses import dataclass
-import math
+import ast
+import pathlib
 import numpy as np
 import pytest
 
@@ -104,6 +106,24 @@ def test_impulse_channel_golden_case_user_defined_non_centered():
     assert res.values.dtype == np.float64
     assert res.values.shape == (3,)
     assert np.allclose(res.values, expected)
+
+
+def test_impulse_channel_golden_case_negative_amplitude():
+    """Verify negative legal source amplitude produces correct signed impulse channel output."""
+    wave = np.array([1.0, 2.0], dtype=np.float64)
+    source = ImpulseSourceConfig(
+        source_type="single_tap",
+        length=3,
+        impulse_zero_index=1,
+        amplitude=-2.0,
+    )
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    res = apply_channel(wave, cfg)
+
+    assert res.values.dtype == np.float64
+    assert res.values.shape == (2,)
+    assert np.array_equal(res.values, np.array([-2.0, -4.0], dtype=np.float64))
 
 
 def test_impulse_channel_golden_case_all_zero_impulse():
@@ -281,36 +301,106 @@ def test_ownership_and_result_isolation():
     assert res2.values[0] != 999.0
 
 
-def test_child_result_boundary_failure_matrix(monkeypatch):
-    """Verify apply_channel raises RuntimeError if build_impulse or convolve_impulse return invalid child results."""
+def test_delegation_called_exactly_once_for_non_empty_and_empty_waves(monkeypatch):
+    """Verify build_impulse and convolve_impulse are called exactly once with exact derived config for non-empty and empty waves."""
+    source = ImpulseSourceConfig(length=3, impulse_zero_index=1, amplitude=2.0)
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
+
+    build_calls = []
+    convolve_calls = []
+
+    orig_build = channel_config.build_impulse
+    orig_convolve = channel_config.convolve_impulse
+
+    def mock_build(src):
+        build_calls.append(src)
+        return orig_build(src)
+
+    def mock_convolve(w, val, conv_cfg):
+        convolve_calls.append((w, val, conv_cfg))
+        return orig_convolve(w, val, conv_cfg)
+
+    monkeypatch.setattr(channel_config, "build_impulse", mock_build)
+    monkeypatch.setattr(channel_config, "convolve_impulse", mock_convolve)
+
+    # 1. Non-empty wave
+    wave_non_empty = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+    apply_channel(wave_non_empty, cfg)
+
+    assert len(build_calls) == 1
+    assert build_calls[0] == source
+    assert len(convolve_calls) == 1
+    assert convolve_calls[0][2] == ImpulseConvolutionConfig(mode="same", impulse_zero_index=1)
+
+    # Reset tracking
+    build_calls.clear()
+    convolve_calls.clear()
+
+    # 2. Empty wave
+    wave_empty = np.array([], dtype=np.float64)
+    apply_channel(wave_empty, cfg)
+
+    assert len(build_calls) == 1
+    assert build_calls[0] == source
+    assert len(convolve_calls) == 1
+    assert convolve_calls[0][2] == ImpulseConvolutionConfig(mode="same", impulse_zero_index=1)
+
+
+def test_child_result_boundary_failure_matrix_full(monkeypatch):
+    """Verify apply_channel raises RuntimeError for all source and convolution child result contract violations."""
     wave = np.array([1.0, 0.0], dtype=np.float64)
     source = ImpulseSourceConfig()
     cfg = ChannelConfig(mode="impulse_response", impulse_source=source)
 
-    # 1. build_impulse returns non-ImpulseSourceResult
-    monkeypatch.setattr(channel_config, "build_impulse", lambda s: "not_a_result")
-    with pytest.raises(RuntimeError, match="source result is not ImpulseSourceResult"):
+    # 1. build_impulse raises TypeError/ValueError -> converted to RuntimeError
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: (_ for _ in ()).throw(ValueError("Source failed")))
+    with pytest.raises(RuntimeError, match="build_impulse failed"):
         apply_channel(wave, cfg)
 
-    # 2. build_impulse returns ImpulseSourceResult subclass
+    # 2. build_impulse returns non-ImpulseSourceResult
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: "not_a_result")
+    with pytest.raises(RuntimeError, match="source result is not exact ImpulseSourceResult"):
+        apply_channel(wave, cfg)
+
+    # 3. build_impulse returns ImpulseSourceResult subclass
     class SubImpulseSourceResult(ImpulseSourceResult):
         pass
 
-    valid_src_res = ImpulseSourceResult(
-        values=np.array([1.0], dtype=np.float64),
-        resolved_config=source,
-        model_level="project_owned_discrete_impulse_source",
-    )
     sub_src_res = SubImpulseSourceResult(
         values=np.array([1.0], dtype=np.float64),
         resolved_config=source,
         model_level="project_owned_discrete_impulse_source",
     )
     monkeypatch.setattr(channel_config, "build_impulse", lambda s: sub_src_res)
-    with pytest.raises(RuntimeError, match="source result is not ImpulseSourceResult"):
+    with pytest.raises(RuntimeError, match="source result is not exact ImpulseSourceResult"):
         apply_channel(wave, cfg)
 
-    # 3. build_impulse returns wrong source model_level
+    # 4. build_impulse returns wrong resolved_config type (subclass or non-config)
+    class SubImpulseSourceConfig(ImpulseSourceConfig):
+        pass
+
+    bad_src_cfg_res = ImpulseSourceResult(
+        values=np.array([1.0], dtype=np.float64),
+        resolved_config=SubImpulseSourceConfig(),
+        model_level="project_owned_discrete_impulse_source",
+    )
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: bad_src_cfg_res)
+    with pytest.raises(RuntimeError, match="source resolved_config is not exact ImpulseSourceConfig"):
+        apply_channel(wave, cfg)
+
+    # 5. build_impulse returns corrupted/invalid resolved_config semantics
+    corrupted_src_cfg = ImpulseSourceConfig()
+    object.__setattr__(corrupted_src_cfg, "source_type", "corrupted_source_type")
+    bad_src_semantics_res = ImpulseSourceResult(
+        values=np.array([1.0], dtype=np.float64),
+        resolved_config=corrupted_src_cfg,
+        model_level="project_owned_discrete_impulse_source",
+    )
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: bad_src_semantics_res)
+    with pytest.raises(RuntimeError, match="source resolved_config semantics invalid"):
+        apply_channel(wave, cfg)
+
+    # 6. build_impulse returns wrong source model_level
     bad_model_src = ImpulseSourceResult(
         values=np.array([1.0], dtype=np.float64),
         resolved_config=source,
@@ -320,7 +410,7 @@ def test_child_result_boundary_failure_matrix(monkeypatch):
     with pytest.raises(RuntimeError, match="source model_level mismatch"):
         apply_channel(wave, cfg)
 
-    # 4. build_impulse returns float32 values
+    # 7. build_impulse returns float32 values
     bad_dtype_src = ImpulseSourceResult(
         values=np.array([1.0], dtype=np.float32),
         resolved_config=source,
@@ -330,7 +420,17 @@ def test_child_result_boundary_failure_matrix(monkeypatch):
     with pytest.raises(RuntimeError, match="source values dtype mismatch"):
         apply_channel(wave, cfg)
 
-    # 5. build_impulse returns non-C-contiguous values (length=2)
+    # 8. build_impulse returns wrong shape
+    bad_shape_src = ImpulseSourceResult(
+        values=np.array([1.0, 2.0], dtype=np.float64),
+        resolved_config=source,
+        model_level="project_owned_discrete_impulse_source",
+    )
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: bad_shape_src)
+    with pytest.raises(RuntimeError, match="source values shape mismatch"):
+        apply_channel(wave, cfg)
+
+    # 9. build_impulse returns non-C-contiguous values (length=2)
     src2 = ImpulseSourceConfig(length=2)
     cfg2 = ChannelConfig(mode="impulse_response", impulse_source=src2)
     base_src = np.array([1.0, 0.0, 2.0, 0.0], dtype=np.float64)
@@ -344,13 +444,64 @@ def test_child_result_boundary_failure_matrix(monkeypatch):
     with pytest.raises(RuntimeError, match="source values is not C-contiguous"):
         apply_channel(wave, cfg2)
 
-    # 6. convolve_impulse returns non-ImpulseConvolutionResult
-    monkeypatch.setattr(channel_config, "build_impulse", lambda s: valid_src_res)
-    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: "not_a_conv_result")
-    with pytest.raises(RuntimeError, match="convolution result is not ImpulseConvolutionResult"):
+    # 10. build_impulse returns non-finite values (NaN)
+    bad_nan_src = ImpulseSourceResult(
+        values=np.array([np.nan], dtype=np.float64),
+        resolved_config=source,
+        model_level="project_owned_discrete_impulse_source",
+    )
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: bad_nan_src)
+    with pytest.raises(RuntimeError, match="source values contains non-finite elements"):
         apply_channel(wave, cfg)
 
-    # 7. convolve_impulse returns wrong mode metadata
+    # Valid source result for convolution tests
+    valid_src_res = ImpulseSourceResult(
+        values=np.array([1.0], dtype=np.float64),
+        resolved_config=source,
+        model_level="project_owned_discrete_impulse_source",
+    )
+
+    # 11. convolve_impulse raises TypeError/ValueError -> converted to RuntimeError
+    monkeypatch.setattr(channel_config, "build_impulse", lambda s: valid_src_res)
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: (_ for _ in ()).throw(ValueError("Convolution failed")))
+    with pytest.raises(RuntimeError, match="convolve_impulse failed"):
+        apply_channel(wave, cfg)
+
+    # 12. convolve_impulse returns non-ImpulseConvolutionResult
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: "not_a_conv_result")
+    with pytest.raises(RuntimeError, match="convolution result is not exact ImpulseConvolutionResult"):
+        apply_channel(wave, cfg)
+
+    # 13. convolve_impulse returns ImpulseConvolutionResult subclass
+    class SubImpulseConvolutionResult(ImpulseConvolutionResult):
+        pass
+
+    conv_cfg_valid = ImpulseConvolutionConfig(mode="same", impulse_zero_index=0)
+    sub_conv_res = SubImpulseConvolutionResult(
+        values=np.array([1.0, 0.0], dtype=np.float64),
+        resolved_config=conv_cfg_valid,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: sub_conv_res)
+    with pytest.raises(RuntimeError, match="convolution result is not exact ImpulseConvolutionResult"):
+        apply_channel(wave, cfg)
+
+    # 14. convolve_impulse returns wrong resolved_config type
+    class SubImpulseConvolutionConfig(ImpulseConvolutionConfig):
+        pass
+
+    bad_conv_cfg_res = ImpulseConvolutionResult(
+        values=np.array([1.0, 0.0], dtype=np.float64),
+        resolved_config=SubImpulseConvolutionConfig(mode="same", impulse_zero_index=0),
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_cfg_res)
+    with pytest.raises(RuntimeError, match="convolution resolved_config is not exact ImpulseConvolutionConfig"):
+        apply_channel(wave, cfg)
+
+    # 15. convolve_impulse returns wrong mode metadata (e.g. "full")
     conv_cfg_wrong_mode = ImpulseConvolutionConfig(mode="full", impulse_zero_index=0)
     bad_conv_mode = ImpulseConvolutionResult(
         values=np.array([1.0, 0.0], dtype=np.float64),
@@ -362,7 +513,7 @@ def test_child_result_boundary_failure_matrix(monkeypatch):
     with pytest.raises(RuntimeError, match="convolution mode mismatch"):
         apply_channel(wave, cfg)
 
-    # 8. convolve_impulse returns wrong zero_index metadata
+    # 16. convolve_impulse returns wrong zero_index metadata
     conv_cfg_wrong_z = ImpulseConvolutionConfig(mode="same", impulse_zero_index=5)
     bad_conv_z = ImpulseConvolutionResult(
         values=np.array([1.0, 0.0], dtype=np.float64),
@@ -374,8 +525,7 @@ def test_child_result_boundary_failure_matrix(monkeypatch):
     with pytest.raises(RuntimeError, match="convolution impulse_zero_index mismatch"):
         apply_channel(wave, cfg)
 
-    # 9. convolve_impulse returns non-zero output_start_index
-    conv_cfg_valid = ImpulseConvolutionConfig(mode="same", impulse_zero_index=0)
+    # 17. convolve_impulse returns non-zero output_start_index
     bad_conv_start = ImpulseConvolutionResult(
         values=np.array([1.0, 0.0], dtype=np.float64),
         resolved_config=conv_cfg_valid,
@@ -386,16 +536,83 @@ def test_child_result_boundary_failure_matrix(monkeypatch):
     with pytest.raises(RuntimeError, match="convolution output_start_index mismatch"):
         apply_channel(wave, cfg)
 
-    # 10. convolve_impulse returns memory aliasing caller wave
-    bad_conv_alias = ImpulseConvolutionResult(
+    # 18. convolve_impulse returns wrong model_level
+    bad_conv_model = ImpulseConvolutionResult(
+        values=np.array([1.0, 0.0], dtype=np.float64),
+        resolved_config=conv_cfg_valid,
+        output_start_index=0,
+        model_level="other_conv_model",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_model)
+    with pytest.raises(RuntimeError, match="convolution model_level mismatch"):
+        apply_channel(wave, cfg)
+
+    # 19. convolve_impulse returns float32 values
+    bad_conv_dtype = ImpulseConvolutionResult(
+        values=np.array([1.0, 0.0], dtype=np.float32),
+        resolved_config=conv_cfg_valid,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_dtype)
+    with pytest.raises(RuntimeError, match="convolution values dtype mismatch"):
+        apply_channel(wave, cfg)
+
+    # 20. convolve_impulse returns wrong shape
+    bad_conv_shape = ImpulseConvolutionResult(
+        values=np.array([1.0], dtype=np.float64),
+        resolved_config=conv_cfg_valid,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_shape)
+    with pytest.raises(RuntimeError, match="convolution values shape mismatch"):
+        apply_channel(wave, cfg)
+
+    # 21. convolve_impulse returns non-C-contiguous values
+    base_conv = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float64)[:, 0]
+    bad_conv_contig = ImpulseConvolutionResult(
+        values=base_conv,
+        resolved_config=conv_cfg_valid,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_contig)
+    with pytest.raises(RuntimeError, match="convolution values is not C-contiguous"):
+        apply_channel(wave, cfg)
+
+    # 22. convolve_impulse returns non-finite values (NaN)
+    bad_conv_nan = ImpulseConvolutionResult(
+        values=np.array([1.0, np.nan], dtype=np.float64),
+        resolved_config=conv_cfg_valid,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_nan)
+    with pytest.raises(RuntimeError, match="convolution values contains non-finite elements"):
+        apply_channel(wave, cfg)
+
+    # 23. convolve_impulse returns memory aliasing caller wave
+    bad_conv_alias_wave = ImpulseConvolutionResult(
         values=wave,
         resolved_config=conv_cfg_valid,
         output_start_index=0,
         model_level="discrete_linear_convolution",
     )
-    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_alias)
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_alias_wave)
     with pytest.raises(RuntimeError, match="convolution values memory aliases caller wave"):
         apply_channel(wave, cfg)
+
+    # 24. convolve_impulse returns memory aliasing source values
+    bad_conv_alias_src = ImpulseConvolutionResult(
+        values=valid_src_res.values,
+        resolved_config=conv_cfg_valid,
+        output_start_index=0,
+        model_level="discrete_linear_convolution",
+    )
+    monkeypatch.setattr(channel_config, "convolve_impulse", lambda w, s, c: bad_conv_alias_src)
+    with pytest.raises(RuntimeError, match="convolution values memory aliases source values"):
+        apply_channel(np.array([1.0], dtype=np.float64), cfg)
 
 
 def test_impulse_channel_serialization_canonical_keys_and_round_trip():
@@ -430,6 +647,33 @@ def test_impulse_channel_serialization_canonical_keys_and_round_trip():
     assert restored == cfg
     assert restored.impulse_source == source
 
-    # Dict mutation isolation
-    d1["impulse_source"]["values"][0] = 999.0
-    assert cfg.impulse_source.values == (0.5, 1.0, -0.5)
+    # Dict & nested list mutation isolation after from_dict
+    raw_dict = cfg.to_dict()
+    restored_from_raw = ChannelConfig.from_dict(raw_dict)
+
+    raw_dict["impulse_source"]["values"][0] = 999.0
+    raw_dict["impulse_source"]["source_type"] = "corrupted"
+
+    assert restored_from_raw.impulse_source.values == (0.5, 1.0, -0.5)
+    assert restored_from_raw.impulse_source.source_type == "user_defined"
+
+
+def test_no_direct_numpy_convolve_or_duplicated_impulse_formula_boundary_check():
+    """AST check verifying pcie_eq/channel_config.py contains zero direct np.convolve calls or duplicated impulse formulas."""
+    config_path = pathlib.Path("pcie_eq/channel_config.py")
+    source_code = config_path.read_text(encoding="utf-8")
+    tree = ast.parse(source_code)
+
+    assert "np.convolve" not in source_code
+    assert "numpy.convolve" not in source_code
+    assert "convolve(" not in source_code or "convolve_impulse(" in source_code
+
+    # Check AST for numpy.convolve calls
+    found_convolve_call = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                if node.func.attr == "convolve":
+                    found_convolve_call = True
+
+    assert not found_convolve_call, "pcie_eq/channel_config.py must not call numpy.convolve directly!"
