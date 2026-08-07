@@ -171,18 +171,25 @@ class ChannelConfig:
                 msg_parts.append(f"extra keys: {sorted(extra)}")
             raise ValueError(f"Invalid dictionary keys ({', '.join(msg_parts)})")
 
+        mode = data["mode"]
         if schema_version == LEGACY_CHANNEL_CONFIG_CONTRACT_ID:
             impulse_source = None
         else:
             raw_source = data["impulse_source"]
-            if raw_source is None:
+            if mode in ("none", "legacy_lowpass"):
+                if raw_source is not None:
+                    raise ValueError(f"Field 'impulse_source' is not applicable for mode '{mode}'")
                 impulse_source = None
-            else:
+            elif mode == "impulse_response":
+                if raw_source is None:
+                    raise ValueError("Field 'impulse_source' is required for mode 'impulse_response'")
                 impulse_source = ImpulseSourceConfig.from_dict(raw_source)
+            else:
+                impulse_source = None
 
         return cls(
             schema_version=schema_version,
-            mode=data["mode"],
+            mode=mode,
             alpha=data["alpha"],
             impulse_source=impulse_source,
         )
@@ -237,9 +244,22 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
         resolved_alpha = None
         model_level = "project_owned_discrete_impulse_channel"
 
-        # Step 8: Call build_impulse exactly once
+        # Defensive reconstruction of source config to pass to build_impulse (Section 14 steps 4 and 8)
+        defensive_source = ImpulseSourceConfig(
+            schema_version=config.impulse_source.schema_version,
+            source_type=config.impulse_source.source_type,
+            sample_interval=config.impulse_source.sample_interval,
+            impulse_zero_index=config.impulse_source.impulse_zero_index,
+            normalization=config.impulse_source.normalization,
+            length=config.impulse_source.length,
+            amplitude=config.impulse_source.amplitude,
+            decay_ratio=config.impulse_source.decay_ratio,
+            values=config.impulse_source.values,
+        )
+
+        # Step 8: Call build_impulse exactly once with defensive_source
         try:
-            source_result = build_impulse(config.impulse_source)
+            source_result = build_impulse(defensive_source)
         except (TypeError, ValueError) as exc:
             raise RuntimeError(f"build_impulse failed: {exc}") from exc
 
@@ -293,7 +313,18 @@ def apply_channel(wave, config: ChannelConfig) -> ChannelResult:
         if source_result.values.shape != (expected_src_len,):
             raise RuntimeError(f"source values shape mismatch: got {source_result.values.shape}, expected ({expected_src_len},)")
 
-        resolved_source = source_result.resolved_config
+        # Reconstruct new final nested resolved ImpulseSourceConfig (Section 12.3 and Section 14 step 13)
+        resolved_source = ImpulseSourceConfig(
+            schema_version=source_result.resolved_config.schema_version,
+            source_type=source_result.resolved_config.source_type,
+            sample_interval=source_result.resolved_config.sample_interval,
+            impulse_zero_index=source_result.resolved_config.impulse_zero_index,
+            normalization=source_result.resolved_config.normalization,
+            length=source_result.resolved_config.length,
+            amplitude=source_result.resolved_config.amplitude,
+            decay_ratio=source_result.resolved_config.decay_ratio,
+            values=source_result.resolved_config.values,
+        )
 
         # Step 10: Derive convolution config
         conv_config = ImpulseConvolutionConfig(

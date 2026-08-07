@@ -7,10 +7,12 @@ Verifies:
 3. Relevance and Nested Config Validation: schema v1 rejection of impulse_response, non-None alpha rejection, missing/wrong impulse_source rejection, explosive wave validation order.
 4. Integration Sample Interval Policy: sample_interval == 1.0 accepted, 0.5/2.0/1.0000001 rejected with ValueError before wave materialization.
 5. Ownership & Result Contract: same-length float64 output, non-aliasing, new array/resolved config allocation per call, result mutation isolation.
-6. Delegation Tracking: build_impulse() called exactly once and convolve_impulse() called exactly once for non-empty and empty waves with exact derived ImpulseConvolutionConfig.
-7. Complete Child Result Boundary Failure Matrix via Monkeypatch: build_impulse or convolve_impulse returning wrong type, subclass, corrupted resolved config, wrong metadata, wrong dtype, wrong shape, non-contiguous, non-finite, or aliased memory (source/wave) all raise RuntimeError without repair.
-8. Serialization: v2 canonical 4-key dictionary, nested source serialization, new allocations per call, caller dict/list mutation isolation after from_dict(), and round-trip consistency.
-9. No direct numpy.convolve() / No duplicated impulse formula AST boundary check.
+6. Defensive Source Reconstruction & Object Identity Isolation: build_impulse receives distinct defensive source instance, final resolved_config.impulse_source is distinct from caller source and source_result.resolved_config.
+7. Early Relevance Rejection in from_dict(): V2 none/legacy_lowpass reject non-None impulse_source with ValueError before calling ImpulseSourceConfig.from_dict() (proven via explosive source parser data).
+8. Delegation Tracking: build_impulse() called exactly once and convolve_impulse() called exactly once for non-empty and empty waves with exact derived ImpulseConvolutionConfig.
+9. Complete Child Result Boundary Failure Matrix via Monkeypatch: build_impulse or convolve_impulse returning wrong type, subclass, corrupted resolved config, wrong metadata, wrong dtype, wrong shape, non-contiguous, non-finite, or aliased memory (source/wave) all raise RuntimeError without repair.
+10. Serialization: v2 canonical 4-key dictionary, nested source serialization, new allocations per call, caller dict/list mutation isolation after from_dict(), and round-trip consistency.
+11. No direct numpy.convolve() / No duplicated impulse formula AST boundary check.
 """
 
 import ast
@@ -299,6 +301,65 @@ def test_ownership_and_result_isolation():
     res1.values[0] = 999.0
     assert wave[0] == 1.0
     assert res2.values[0] != 999.0
+
+
+def test_defensive_source_reconstruction_and_identity_isolation(monkeypatch):
+    """Verify build_impulse receives equal but distinct defensive source, and final resolved_config.impulse_source is distinct from caller source and child source_result.resolved_config."""
+    source_caller = ImpulseSourceConfig(length=3, impulse_zero_index=1, amplitude=2.0)
+    cfg = ChannelConfig(mode="impulse_response", impulse_source=source_caller)
+
+    received_build_sources = []
+    returned_child_results = []
+
+    orig_build = channel_config.build_impulse
+
+    def mock_build(src):
+        received_build_sources.append(src)
+        res = orig_build(src)
+        returned_child_results.append(res)
+        return res
+
+    monkeypatch.setattr(channel_config, "build_impulse", mock_build)
+
+    wave = np.array([1.0, 0.0], dtype=np.float64)
+    res = apply_channel(wave, cfg)
+
+    # (a) build_impulse receives an equal but distinct (is not) defensive source instance
+    assert len(received_build_sources) == 1
+    src_passed_to_build = received_build_sources[0]
+    assert src_passed_to_build == source_caller
+    assert src_passed_to_build is not source_caller
+
+    # (b) final res.resolved_config.impulse_source is distinct (is not) from caller source AND child source_result.resolved_config
+    child_source_res = returned_child_results[0]
+    final_resolved_source = res.resolved_config.impulse_source
+
+    assert final_resolved_source == source_caller
+    assert final_resolved_source is not source_caller
+    assert final_resolved_source is not child_source_res.resolved_config
+    assert final_resolved_source is not src_passed_to_build
+
+
+def test_from_dict_early_relevance_rejection_without_nested_parsing():
+    """Verify V2 none and legacy_lowpass reject non-None impulse_source with ValueError before calling source parsing/conversion."""
+    # Dict with invalid/non-dict impulse_source data
+    d_none = {
+        "schema_version": CHANNEL_CONFIG_CONTRACT_ID,
+        "mode": "none",
+        "alpha": None,
+        "impulse_source": "invalid_source_string_data",
+    }
+    with pytest.raises(ValueError, match="Field 'impulse_source' is not applicable for mode 'none'"):
+        ChannelConfig.from_dict(d_none)
+
+    d_lp = {
+        "schema_version": CHANNEL_CONFIG_CONTRACT_ID,
+        "mode": "legacy_lowpass",
+        "alpha": 0.08,
+        "impulse_source": {"source_type": "invalid_source_type"},
+    }
+    with pytest.raises(ValueError, match="Field 'impulse_source' is not applicable for mode 'legacy_lowpass'"):
+        ChannelConfig.from_dict(d_lp)
 
 
 def test_delegation_called_exactly_once_for_non_empty_and_empty_waves(monkeypatch):
